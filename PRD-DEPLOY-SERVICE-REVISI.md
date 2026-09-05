@@ -1,7 +1,7 @@
 # ==============================================================================
-# PRODUCT REQUIREMENT DOCUMENT (PRD) — REVISI 2.0 — DRAFT UNTUK REVIEW
+# PRODUCT REQUIREMENT DOCUMENT (PRD) — REVISI 2.1 — FINAL UNTUK TARGET SNIPE-IT v8.6.3
 # SISTEM: MODUL DEPLOYMENT ASET & PERBAIKAN MULTI-CABANG TINGKAT ENTERPRISE
-# PLATFORM: SNIPE-IT (TARGET VERSION: v6.x / v7.x — VERIFIKASI DI TIM IMPLEMENTASI)
+# PLATFORM: SNIPE-IT (TARGET VERSION: v8.6.3 — https://github.com/grokability/snipe-it/tree/v8.6.3)
 # TANDA TANGAN KODE: erickalvino
 # ==============================================================================
 
@@ -13,6 +13,8 @@
 - **Sumber:** `PRD-DEPLOY-SERVICE.md` (Revisi Final v1, 40 bagian)
 - **Hasil review:** `REVIEW-PRD-DEPLOY-SERVICE.md`
 - **Tujuan revisi:** Menghilangkan semua pendekatan `hardcoded`, melengkapi artefak yang hilang, dan menutup celah teknis sebelum kode di-inject ke Snipe-IT produksi.
+- **Versi target:** `grokability/snipe-it` tag `v8.6.3` (PHP `^8.2`, Laravel `^12.0`)
+- **Keputusan terkonfirmasi pengguna:** Accessories & licenses dapat di-assign ke **user maupun asset**; kolom `company_id` dan `location_id` pada aset Snipe-IT **tidak selalu terisi (nullable)**.
 
 ## 📄 0.2 Daftar perbaikan utama (traceability ke review)
 
@@ -31,7 +33,7 @@
 | R-11 | File translasi `custom` tidak ada | Ditambahkan skeleton `lang/*/custom.php` |
 | R-12 | FK tidak lengkap | Ditambahkan FK lengkap + `unsignedBigInteger` konsisten |
 | R-13 | `item_id` unregistered donor tidak konsisten | `item_id` dibuat nullable + kolom `part_name`/`part_spec` |
-| R-14 | Accessory di-assign ke asset (salah) | Ditambahkan pivot `asset_accessory_installs` / kebijakan assignee yang benar |
+| R-14 | Accessory di-assign ke asset (salah) | Ditambahkan handler berbasis pivot resmi `accessories_checkout` (assigned_type User/Asset/Location) |
 | R-15 | License tidak pernah diproses | Ditambahkan `LicenseSeatHandler` untuk allocate/release seat |
 | R-16 | Karantina tidak sinkron dengan config | Ditambahkan `QuarantineService` terpusat |
 | R-17 | Tidak ada concurrency control | `lockForUpdate()` + unique constraint + idempotency key |
@@ -63,18 +65,25 @@ Perubahan fundamental pada revisi 2.0:
 - Alur: buat draft → terbitkan → proses → QC → serah terima → selesai / rusak total / batal.
 - Tanpa menghilangkan fitur native Snipe-IT; modul kustom hanya menambah lapisan workflow & transaksi.
 
-## 📄 1.3 Asumsi Teknis (WAJIB DITEGASKAN SEBELUM IMPLEMENTASI)
+## 📄 1.3 Asumsi Teknis (TERKONFIRMASI PADA v8.6.3)
 
 | Asumsi | Nilai |
 |---|---|
-| Snipe-IT | v6.x / v7.x (pilih satu, verifikasi skema) |
-| PHP | 8.1+ |
-| Laravel | versi mengikuti Snipe-IT target |
+| Repo & tag | `grokability/snipe-it` tag `v8.6.3` (commit `cfd1ff8`) |
+| PHP | `^8.2` |
+| Laravel | `^12.0` |
 | DB | MySQL 8.0 / MariaDB 10.6 |
-| Tabel core Snipe-IT | `assets`, `users`, `companies`, `locations`, `departments`, `suppliers`, `status_labels`, `components`, `accessories`, `licenses`, `license_seats`, `checkouts`, `action_logs` |
-| Pivot core | `components_assets`, `accessories_users`, `license_seats`, `checkouts` — **nama kolom divergensi harus diverifikasi di versi target** |
+| Asset `company_id` | `nullable`, tidak selalu terisi (migrasi `2015_11_08_035832_add_company_id_to_assets_table.php`) |
+| Asset `location_id` | `nullable`, tidak selalu terisi (migrasi `2013_11_16_103336_add_location_id_to_assets.php`) |
+| Tabel accessory checkout | `accessories_checkout` (hasil rename dari `accessories_users`) dengan kolom `assigned_to`, `assigned_type`, `accessory_id`, `note`, `created_by` |
+| Accessory assignable ke | `User::class`, `Asset::class`, `Location::class` (morph `assigned_to` + `assigned_type`) |
+| Tabel license seat | `license_seats` dengan kolom `license_id`, `assigned_to`, `asset_id`, `notes`, `user_id` |
+| License assignable ke | User (via `assigned_to`) dan Asset (via `asset_id`, plus `assigned_to` = user yang memegang aset) |
+| Pivot component | `components_assets` (`component_id`, `asset_id`, `assigned_to`, `user_id`, `note`) |
 
-> ⚠️ **Keputusan wajib:** sebelum implementasi, tim harus menjalankan `composer require` di instalasi Snipe-IT target dan mencocokkan seluruh nama tabel/kolom pivot yang dipakai. Bagian ini tidak boleh dianggap final tanpa verifikasi.
+> ✅ Dua keputusan pengguna sudah diakomodasi dalam dokumen ini:
+> 1. Accessory & license hanya perlu menyesuaikan skema v8.6.3, **tidak perlu pivot custom khusus asset**.
+> 2. Karena `company_id`/`location_id` pada asset bisa null, modul menyediakan **`custom.default_company_id`** dan **`custom.default_location_id`**. Jika keduanya juga kosong, modul **gagal dengan pesan konfigurasi yang jelas**, bukan memakai ID tebakan.
 
 ---
 
@@ -177,14 +186,20 @@ Perubahan fundamental pada revisi 2.0:
 <?php
 // erickalvino-MODULE_CORE: Konfigurasi terpusat multi-cabang kustom — tanpa ID hardcoded
 return [
+    // Nilai default bila company_id / location_id asset KOSONG.
+    // WAJIB diisi dari env. Jika kosong, modul tidak boleh menebak ID.
+    'default_company_id' => (int) env('CUSTOM_DEFAULT_COMPANY_ID', 0),
+    'default_location_id'=> (int) env('CUSTOM_DEFAULT_LOCATION_ID', 0),
+
     // Status label yang dipakai untuk mengunci unit rusak total / BER
-    // Nilai HARUS diisi dari env, tidak boleh di-hardcode di controller.
     'quarantine_status_id' => (int) env('CUSTOM_QUARANTINE_STATUS_ID', 0),
 
-    // Tabel pivot attachment yang dipakai modul (diverifikasi di Snipe-IT target)
+    // Tabel & kolom pivot resmi Snipe-IT v8.6.3 (VERIFIKASI saat implementasi)
     'pivot' => [
         'component_asset'     => 'components_assets',
-        'accessory_install'   => 'asset_accessory_installs',
+        'accessory_checkout'  => 'accessories_checkout',
+        'accessory_type_user' => \App\Models\User::class,
+        'accessory_type_asset'=> \App\Models\Asset::class,
         'license_seat'        => 'license_seats',
     ],
 
@@ -231,6 +246,10 @@ return [
 ## 📄 4.2 `.env` sample
 
 ```env
+# Default company/location bila nilai pada asset kosong (WAJIB diisi)
+CUSTOM_DEFAULT_COMPANY_ID=0
+CUSTOM_DEFAULT_LOCATION_ID=0
+
 # Status karantina (id status_labels di Snipe-IT, harus diisi)
 CUSTOM_QUARANTINE_STATUS_ID=0
 
@@ -291,6 +310,34 @@ class BranchResolver
     {
         return (string) self::get($locationId)['prefix'];
     }
+
+    /**
+     * Tetapkan company_id & location_id historis dari asset.
+     * Karakteristik v8.6.3: kolom pada asset BISA NULL.
+     * Urutan resolusi: nilai asset jika ada -> config default -> error.
+     */
+    public static function fromAsset($asset): array
+    {
+        $companyId = (int) ($asset->company_id ?? 0) ?: (int) config('custom.default_company_id', 0);
+        $locationId = (int) ($asset->location_id ?? 0) ?: (int) config('custom.default_location_id', 0);
+
+        if ($companyId <= 0) {
+            throw new RuntimeException(
+                "Asset {$asset->asset_tag} tidak memiliki company_id dan CUSTOM_DEFAULT_COMPANY_ID belum diisi."
+            );
+        }
+
+        if ($locationId <= 0) {
+            throw new RuntimeException(
+                "Asset {$asset->asset_tag} tidak memiliki location_id dan CUSTOM_DEFAULT_LOCATION_ID belum diisi."
+            );
+        }
+
+        // Pastikan lokasi tsb memang dikonfigurasi sebagai cabang modul.
+        self::get($locationId);
+
+        return ['company_id' => $companyId, 'location_id' => $locationId];
+    }
 }
 ```
 
@@ -308,6 +355,15 @@ private function validateCustomConfig(): void
 {
     if ((int) config('custom.quarantine_status_id') <= 0) {
         throw new \RuntimeException('[CUSTOM MODULE] CUSTOM_QUARANTINE_STATUS_ID wajib diisi.');
+    }
+
+    // v8.6.3: asset company/location nullable, sehingga default WAJIB ada agar
+    // modul tidak menebak ID saat aset yang dipilih belum terisi.
+    if ((int) config('custom.default_company_id') <= 0) {
+        throw new \RuntimeException('[CUSTOM MODULE] CUSTOM_DEFAULT_COMPANY_ID wajib diisi.');
+    }
+    if ((int) config('custom.default_location_id') <= 0) {
+        throw new \RuntimeException('[CUSTOM MODULE] CUSTOM_DEFAULT_LOCATION_ID wajib diisi.');
     }
 
     foreach (array_keys(config('custom.branches') ?? []) as $locationId) {
@@ -657,37 +713,50 @@ return new class extends Migration
 };
 ```
 
-## 📄 5.8 Pivot kustom untuk aksesoris & license assignment
+## 📄 5.8 Pivot resmi Snipe-IT v8.6.3 (TIDAK perlu tabel pivot kustom)
 
-```php
-<?php
-// erickalvino-MODULE_DEPLOY: Pivot kustom aksesoris yang dipasang ke aset (bukan ke user)
-return new class extends Migration
-{
-    public function up(): void
-    {
-        Schema::create('asset_accessory_installs', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->unsignedBigInteger('asset_id')->index();
-            $table->unsignedBigInteger('accessory_id')->index();
-            $table->unsignedInteger('qty')->default(1);
-            $table->unsignedBigInteger('deployment_id')->nullable()->index();
-            $table->unsignedBigInteger('created_by')->index();
-            $table->timestamps();
+> **Keputusan final:** accessory & license di v8.6.3 sudah mendukung assign ke user dan asset.
+> Modul kustom **tidak membuat migrasi pivot tambahan** untuk accessory/license, melainkan memakai tabel resmi berikut.
 
-            $table->foreign('asset_id')->references('id')->on('assets')->onDelete('cascade');
-            $table->foreign('accessory_id')->references('id')->on('accessories')->onDelete('cascade');
-            $table->foreign('deployment_id')->references('id')->on('asset_deployments')->onDelete('set null');
-            $table->foreign('created_by')->references('id')->on('users')->onDelete('restrict');
-        });
-    }
+### a) Accessories → `accessories_checkout` (dari `accessories_users`, rename di v7+)
 
-    public function down(): void
-    {
-        Schema::dropIfExists('asset_accessory_installs');
-    }
-};
+```sql
+-- Dari migrasi 2024_07_26_143301_add_checkout_for_all_types_to_accessories.php
+table accessories_checkout:
+  id             bigint unsigned
+  accessory_id   int unsigned nullable
+  assigned_to    int unsigned nullable
+  assigned_type  string nullable   -- \App\Models\User | \App\Models\Asset | \App\Models\Location
+  note           string nullable
+  created_by     int unsigned nullable
+  created_at / updated_at timestamp
 ```
+
+- Assign ke **user**: `assigned_to = user.id`, `assigned_type = \App\Models\User::class`
+- Assign ke **asset**: `assigned_to = asset.id`, `assigned_type = \App\Models\Asset::class`
+- `AccessoryCheckout::checkedOutToUser()`, `checkedOutToAsset()`, `checkedOutToLocation()` sudah tersedia.
+
+### b) Licenses → `license_seats`
+
+```sql
+-- Dari migrasi 2013_11_25_031458_create_license_seats_table.php
+table license_seats:
+  id            int unsigned
+  license_id    int nullable
+  assigned_to   int nullable  -> user.id
+  asset_id      int nullable  -> asset.id
+  notes         text nullable
+  user_id       int nullable
+  deleted_at    timestamp nullable
+```
+
+- Assign ke **user**: set `assigned_to = user_id`.
+- Assign ke **asset**: set `asset_id = asset_id` dan (jika aset sedang dipegang user) set `assigned_to = asset->assigned_to` sesuai pola `LicenseSeatCheckoutController::checkoutToAsset()`.
+- Model `LicenseSeat` sudah menyediakan relasi `user()` dan `asset()`.
+
+> ⚠️ Catatan implementasi: saat menulis ke `license_seats`, ikuti logika pada
+> `app/Http/Controllers/Licenses/LicenseCheckoutController.php` milik core, jangan menulis langsung tanpa
+> menyetel `assigned_to`/`asset_id` sesuai pola tersebut.
 
 ---
 
@@ -1167,7 +1236,13 @@ class StockReservationService
         return match ($type) {
             'COMPONENT' => (int) DB::table('components')->whereKey($id)->value('qty'),
             'ACCESSORY' => (int) DB::table('accessories')->whereKey($id)->value('qty'),
-            'LICENSE'   => (int) DB::table('licenses')->whereKey($id)->value('seats'),
+            // v8.6.3: seat lisensi = baris license_seats yang belum ter-assign.
+            'LICENSE'   => (int) DB::table('license_seats')
+                ->where('license_id', $id)
+                ->whereNull('assigned_to')
+                ->whereNull('asset_id')
+                ->whereNull('deleted_at')
+                ->count(),
             default     => 0,
         };
     }
@@ -1242,32 +1317,115 @@ class DocumentNumberService
 }
 ```
 
-## 📄 9.4 `LicenseSeatHandler.php`
+## 📄 9.4 `AccessoryHandler.php` (v8.6.3 — tabel `accessories_checkout`)
 
 ```php
 <?php
-// erickalvino-MODULE_DEPLOY: Handler lisensi — allocate/release seat dengan benar
+// erickalvino-MODULE_DEPLOY: Handler aksesoris — assign ke user ATAU asset via accessories_checkout
 namespace App\Services\Custom;
 
-class LicenseSeatHandler
+use App\Models\AccessoryCheckout;
+use App\Models\Asset;
+use App\Models\User;
+
+class AccessoryHandler
 {
-    public function assignSeat($licenseId, $asset): void
+    public function assignToUser($accessoryId, int $userId, string $note = null): void
     {
-        // Implementasi harus disesuaikan dengan skema license_seats / checkouts Snipe-IT target.
-        // Wajib menggunakan tabel pivot resmi Snipe-IT, tidak boleh insert manual tanpa verifikasi kolom.
-        // Jika di target tidak mendukung seat yang terikat aset, gunakan user assignee asset tsb.
-        throw_if_empty_placeholder($licenseId, $asset);
+        AccessoryCheckout::create([
+            'accessory_id'  => $accessoryId,
+            'assigned_to'   => $userId,
+            'assigned_type' => User::class,
+            'note'          => $note,
+            'created_by'    => auth()->id(),
+        ]);
     }
 
-    public function releaseSeat($licenseId, $asset): void
+    public function assignToAsset($accessoryId, Asset $asset, string $note = null): void
     {
-        // Sama: gunakan API/checkout Snipe-IT yang sudah tersedia, bukan update manual.
-        throw_placeholder($licenseId, $asset);
+        AccessoryCheckout::create([
+            'accessory_id'  => $accessoryId,
+            'assigned_to'   => $asset->id,
+            'assigned_type' => Asset::class,
+            'note'          => $note,
+            'created_by'    => auth()->id(),
+        ]);
+    }
+
+    public function releaseByAsset($accessoryId, int $assetId): void
+    {
+        AccessoryCheckout::where('accessory_id', $accessoryId)
+            ->where('assigned_type', Asset::class)
+            ->where('assigned_to', $assetId)
+            ->delete();
     }
 }
 ```
 
-> Catatan: `LicenseSeatHandler` ditulis sebagai **kontrak**. Implementasi final harus divalidasi ke skema Snipe-IT target sebelum coding.
+## 📄 9.5 `LicenseSeatHandler.php` (v8.6.3 — tabel `license_seats`)
+
+```php
+<?php
+// erickalvino-MODULE_DEPLOY: Handler lisensi — assign ke user ATAU asset via license_seats
+namespace App\Services\Custom;
+
+use App\Models\Asset;
+use App\Models\LicenseSeat;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+
+class LicenseSeatHandler
+{
+    /**
+     * Assign seat ke asset (pola LicenseSeatCheckoutController v8.6.3).
+     * - license_seats.asset_id   = asset.id
+     * - license_seats.assigned_to = asset->assigned_to (user pemegang aset, jika ada)
+     * - license_seats.license_id  = license.id
+     */
+    public function assignSeatToAsset(int $licenseId, Asset $asset): void
+    {
+        $seat = LicenseSeat::where('license_id', $licenseId)
+            ->whereNull('assigned_to')
+            ->whereNull('asset_id')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $seat) {
+            abort(422, "Tidak ada seat lisensi tersedia untuk license_id {$licenseId}.");
+        }
+
+        DB::transaction(function () use ($seat, $asset) {
+            $seat->asset_id = $asset->id;
+            $seat->assigned_to = $asset->assigned_to ?? null; // user pemegang aset, bila ada
+            $seat->save();
+        });
+    }
+
+    public function assignSeatToUser(int $licenseId, User $user): void
+    {
+        $seat = LicenseSeat::where('license_id', $licenseId)
+            ->whereNull('assigned_to')
+            ->whereNull('asset_id')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $seat) {
+            abort(422, "Tidak ada seat lisensi tersedia untuk license_id {$licenseId}.");
+        }
+
+        $seat->assigned_to = $user->id;
+        $seat->save();
+    }
+
+    public function releaseSeat(int $licenseSeatId): void
+    {
+        LicenseSeat::whereKey($licenseSeatId)
+            ->update(['assigned_to' => null, 'asset_id' => null]);
+    }
+}
+```
+
+> Catatan penggunaan: `releaseSeat()` dipanggil pada fase `CANCELLED` atau saat `detached_items.release_license_seat = 1`. Sebelum produksi, disarankan memakai controller/Actionlog core bila modul ini perlu menampilkan riwayat checkout Snipe-IT standard.
 
 ---
 
@@ -1323,14 +1481,14 @@ class AssetDeploymentsController extends Controller
         return DB::transaction(function () use ($request) {
             $asset = \App\Models\Asset::findOrFail($request->integer('asset_id'));
 
-            if (! $asset->company_id || ! $asset->location_id) {
-                abort(422, 'Asset target belum memiliki company/location, tidak bisa dibuat historical lock.');
-            }
+            // v8.6.3: company/location asset BISA null, jadi ambil dari asset bila ada,
+            // kalau kosong gunakan CUSTOM_DEFAULT_*, dan gagal bila dua-duanya belum dikonfigurasi.
+            $context = \App\Services\Custom\BranchResolver::fromAsset($asset);
 
             $deployment = AssetDeployment::create([
                 'asset_id'             => $asset->id,
-                'company_id'           => $asset->company_id,
-                'location_id'          => $asset->location_id,
+                'company_id'           => $context['company_id'],
+                'location_id'          => $context['location_id'],
                 'target_department_id' => $request->integer('target_department_id'),
                 'assigned_technician_id' => $request->integer('assigned_technician_id'),
                 'status'               => 'DRAFT',
@@ -1362,7 +1520,11 @@ class AssetDeploymentsController extends Controller
 
         return DB::transaction(function () use ($deployment) {
             (new StockReservationService)->reserve($deployment);
-            (new \App\Services\Custom\DocumentNumberService)->uniqueNoIfNeeded($deployment, 'deployment');
+
+            // Auto-generate nomor dokumen (BAST deployment) saat terbit.
+            $deployment->document_number = (new \App\Services\Custom\DocumentNumberService)
+                ->next('deployment', $deployment->location_id, $deployment->id);
+
             $deployment->status = 'PENDING_HANDOVER';
             $deployment->save();
             $this->log($deployment, 'DEPLOYMENT', 'DRAFT', 'Tiket diterbitkan & reservasi stok dibuat.');
@@ -1387,8 +1549,10 @@ class AssetDeploymentsController extends Controller
             foreach ($deployment->allocatedItems as $item) {
                 match ($item->item_type) {
                     'COMPONENT' => $this->installComponent($asset, $item),
-                    'ACCESSORY' => $this->installAccessory($asset, $item),
-                    'LICENSE'   => (new \App\Services\Custom\LicenseSeatHandler)->assignSeat($item->item_id, $asset),
+                    'ACCESSORY' => (new \App\Services\Custom\AccessoryHandler)
+                        ->assignToAsset($item->item_id, $asset, 'Otomatis via Modul Deployment erickalvino'),
+                    'LICENSE'   => (new \App\Services\Custom\LicenseSeatHandler)
+                        ->assignSeatToAsset($item->item_id, $asset),
                     default => null,
                 };
             }
@@ -1445,15 +1609,17 @@ class CustomMaintenancesController extends Controller
     {
         return DB::transaction(function () use ($request) {
             $asset = \App\Models\Asset::findOrFail($request->integer('asset_id'));
-            if (! $asset->company_id || ! $asset->location_id) abort(422);
+
+            // v8.6.3: company/location asset BISA null, jadi resolve dari asset / default config.
+            $context = \App\Services\Custom\BranchResolver::fromAsset($asset);
 
             $maintenance = CustomMaintenance::create([
                 'asset_id' => $asset->id,
-                'company_id' => $asset->company_id,
-                'location_id' => $asset->location_id,
+                'company_id' => $context['company_id'],
+                'location_id' => $context['location_id'],
                 'maintenance_type' => $request->input('maintenance_type'),
                 'is_warranty_claim' => $request->boolean('is_warranty_claim'),
-                'warranty_status_at_launch' => (new CustomMaintenance())->detectWarrantyStatus(),
+                'warranty_status_at_launch' => 'UNKNOWN',
                 'supplier_id' => $request->integer('supplier_id'),
                 'assigned_technician_id' => $request->integer('assigned_technician_id'),
                 'status' => 'DRAFT',
@@ -1461,6 +1627,10 @@ class CustomMaintenancesController extends Controller
                 'issue_description' => $request->input('issue_description'),
                 'created_by' => auth()->id(),
             ]);
+
+            // Hitung garansi setelah model tersimpan agar relasi asset() sudah tersedia.
+            $maintenance->warranty_status_at_launch = $maintenance->detectWarrantyStatus();
+            $maintenance->save();
 
             foreach ((array) $request->input('cannibal_items', []) as $item) {
                 $maintenance->cannibalItems()->create([
@@ -2001,7 +2171,7 @@ class AssetDeploymentEnterpriseTest extends TestCase
 | TC-04 | Complete stock | COMPLETED deployment dengan komponen qty 10 | qty berkurang sesuai alokasi |
 | TC-05 | Dynamic quarantine | UNREPAIRABLE di cabang Bandung | Aset masuk status quarantine & lokasi dari config |
 | TC-06 | License | Alokasi LICENSE saat COMPLETED | Seat ter-assign / terpinjam via handler |
-| TC-07 | Accessory | Pasang accessory ke asset | Dicatat di `asset_accessory_installs`, bukan pivot user |
+| TC-07 | Accessory | Pasang accessory ke asset | Muncul di `accessories_checkout` dengan `assigned_type = \App\Models\Asset::class` |
 | TC-08 | Multi-company | User company A lihat data company B | Data tidak muncul |
 | TC-09 | CSV export | Export dashboard dengan filter cabang | Kolom branch & TCO sesuai |
 | TC-10 | Idempotency | Klik complete 2x | Decrement hanya terjadi 1x |
@@ -2045,27 +2215,38 @@ class AssetDeploymentEnterpriseTest extends TestCase
 ---
 
 # ------------------------------------------------------------------------------
-# 📌 BAGIAN 19: PERTANYAAN TERBUKA (SEBELUM CODING FINAL)
+# 📌 BAGIAN 19: KEPUTUSAN YANG SUDAH DIKONFIRMASI & CATATAN IMPLEMENTASI TERSISA
 # ------------------------------------------------------------------------------
 
-1. **Versi Snipe-IT target** benar-benar v6 / v7 mana? Ini menentukan nama tabel pivot & field.
-2. Apakah `company_id` & `location_id` pada Snipe-IT **selalu terisi**? Jika tidak, perlu fallback config `custom.default_company_id` / `custom.default_location_id` yang eksplisit.
-3. Apakah aksesoris **boleh** dipasang langsung ke aset Snipe-IT, atau hanya ke user? Ini memengaruhi pivot custom di Bagian 5.8.
-4. Apakah license di-assign ke **user** atau bisa ke **asset**? License handler harus memakai API resmi Snipe-IT.
-5. Nomor dokumen `SJP`/`BAST` harus **unique per cabang & tahun**, sudah dihandle `document_number` unique. Perlu dipastikan kasus duplicate number.
-6. Apakah perlu kolom **asset donor** di maintenance dipindah ke lokasi karantina **sebelum** `CANCELLED`? Perlu kebijakan eksplisit.
-7. Apakah ada kebutuhan **notifikasi email** saat status berubah? Belum ada di scope v2.
+## 📄 19.1 Keputusan terkonfirmasi pengguna
+
+| No | Pertanyaan | Jawaban | Dampak implementasi |
+|---|---|---|---|
+| 1 | Versi Snipe-IT target | **v8.6.3** (`grokability/snipe-it`) | Pakai `accessories_checkout` dan `license_seats`; PHP ^8.2, Laravel ^12 |
+| 2 | `company_id` / `location_id` aset | **Tidak selalu terisi (nullable)** | Wajib `CUSTOM_DEFAULT_COMPANY_ID` & `CUSTOM_DEFAULT_LOCATION_ID`; `BranchResolver::fromAsset()` sebagai satu-satunya sumber |
+| 3 | Aksesoris assign ke | **User dan asset** | Pakai tabel `accessories_checkout` dengan `assigned_type = User::class` / `Asset::class` |
+| 4 | Lisensi assign ke | **User dan asset** | Pakai tabel `license_seats` (`assigned_to` untuk user, `asset_id` untuk asset, `assigned_to` = user pemegang asset bila ada) |
+
+## 📄 19.2 Catatan yang masih perlu diputuskan di implementasi
+
+1. **Nomor dokumen unik per cabang/tahun.** `document_number` di DB hanya unik secara global. Pada implementasi, pastikan `unique:asset_deployments,document_number`/`custom_maintenances` tetap aman dan tidak terjadi collision pada reset nomor.
+2. **Pemindahan aset donor saat cancel/unrepairable.** Perlu kebijakan tegas: donor boleh dipindah ke karantina hanya saat `UNREPAIRABLE`, bukan pada `CANCELLED`.
+3. **Notifikasi email.** Saat ini belum termasuk scope. Kapabilitas Snipe-IT v8.6.3 (`checkin_email`, `requireAcceptance`, `notify`) perlu dipertimbangkan sebagai enhancement, bukan blocker.
+4. **Actionlog core.** Untuk riwayat checkout yang tampil di halaman Snipe-IT standard, modul kustom perlu menulis ke `action_logs` (atau memanggil service core) agar riwayat tetap muncul di aktivitas aset.
 
 ---
 
 # ==============================================================================
-# 🎯 KESIMPULAN REVISI 2.0
+# 🎯 KESIMPULAN REVISI 2.1 (TARGET v8.6.3)
 # ==============================================================================
 
 Dokumen ini menggantikan pendekatan v1 yang **banyak hardcoded** dengan desain **configuration-driven** dan **service layer**:
 - Tidak ada ID/code cabang yang dikunci di kode.
+- Karena `company_id`/`location_id` aset bisa null, **historical lock** selalu diambil dari asset bila ada, atau dari `CUSTOM_DEFAULT_*` bila kosong; keduanya kosong berarti sistem menolak dengan pesan jelas.
 - Stok tidak lagi "dikunci secara komentar"; melainkan melalui **tabel reservasi** & `lockForUpdate`.
+- Accessory & license memakai **tabel resmi v8.6.3** (`accessories_checkout`, `license_seats`) yang mendukung assign ke user maupun asset.
 - Semua transisi status menggunakan **POST** dan didukung **Policy**.
 - Semua artefak pendukung (config, env, policy, view, translasi, factory, test) sudah didefinisikan sebagai deliverable.
 
-**Status:** DRAFT UNTUK REVIEW. Sebelum produksi, konfirmasi Bagian 19 (versi Snipe-IT & kebijakan license/accessory) lalu isi checklist Fase A–D.
+**Status:** SIAP UNTUK DIREVIEW TIM IMPLEMENTASI TERHADAP SKEMA v8.6.3.
+**Sisa tindakan:** verifikasi kolom `components_assets` tepat di instalasi target, lalu jalankan checklist Fase A–D.

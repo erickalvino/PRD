@@ -1358,7 +1358,9 @@ Route::group(['middleware'=>['auth']], function () {
         Route::get('/', [CustomAssetLoansController::class,'index'])->name('index');
         Route::get('create', [CustomAssetLoansController::class,'create'])->name('create');
         Route::post('store', [CustomAssetLoansController::class,'store'])->name('store');
+        Route::get('{id}', [CustomAssetLoansController::class,'show'])->name('show');
         Route::get('{id}/edit', [CustomAssetLoansController::class,'edit'])->name('edit');
+        Route::get('{id}/edit-checking', [CustomAssetLoansController::class,'editChecking'])->name('edit-checking');
 
         Route::post('{id}/release', [CustomAssetLoansController::class,'releaseToPendingApproval'])->name('release');
         Route::post('{id}/approve-loan', [CustomAssetLoansController::class,'approveToOnLoan'])->name('approve-loan');
@@ -1392,67 +1394,211 @@ Route::group(['prefix'=>'v1/custom','middleware'=>['auth:api']], function () {
 
 ## 📄 12.1 Daftar view wajib
 
-| File | Fungsi |
-|---|---|
-| `custom-loans/index.blade.php` | Tabel Bootstrap Bootstrap |
-| `custom-loans/create.blade.php` | Form draft |
-| `custom-loans/edit-checking.blade.php` | QC pengembalian |
-| `custom-loans/edit.blade.php` | Edit draft |
-| `custom-loans/reports/loan-handover-pdf.blade.php` | Cetak surat jalan |
+| File | Archetype | Fungsi |
+|---|---|---|
+| `custom-loans/index.blade.php` | A — INDEX | Daftar dokumen peminjaman |
+| `custom-loans/show.blade.php` | B — SHOW-DOKUMEN | Detail + manifest + workflow |
+| `custom-loans/create.blade.php` | D — FORM | Buat draft |
+| `custom-loans/edit.blade.php` | D — FORM | Edit draft |
+| `custom-loans/edit-checking.blade.php` | D — FORM | QC pengembalian |
+| `custom-loans/reports/loan-handover-pdf.blade.php` | Print | Cetak surat jalan |
+| `resources/views/blade/table/custom-loans.blade.php` | wrapper `x-table` | Registrasi formatter |
 
-## 📄 12.2 Aturan view
-- Semua state-changing memakai form `POST` + `@csrf`.
-- Semua dropdown status label di-load dari controller (`$statusLabels`), **bukan hardcoded option**.
-- Item form memakai field eksplisit sesuai tipe:
-  - `items[i][asset_id]`
-  - `items[i][accessory_id]`
-  - `items[i][component_id]`
-  - `items[i][license_id]`
-  - `items[i][parent_asset_id]` (untuk aksesori/komponen/license bawaan aset induk)
-- `index` wajib menampilkan kolom `document_number`, `branch_location`, `borrower`, `planned_dates`, `status`, `actions`.
+## 📄 12.2 Aturan view (WAJIB IKUTI `PRD-VIEW-BLUEPRINT.md`)
 
-## 📄 12.3 `index.blade.php` (skeleton)
+1. **Layout:** semua halaman `@extends('layouts/default')`; **dilarang** `@section('page_title')`.
+2. **Judul:** `@section('title')` selalu terisi; `@section('title0')` opsional; tombol global kembali/edit di `@section('header_right')`.
+3. **Konten:** dibungkus `<x-container>` + `<x-box>`; metadata memakai `<x-well>`, `<x-info-element>`, `<x-icon>`, `<x-copy-to-clipboard>`, `<x-info-panel>`.
+4. **Index:** wajib memakai `x-table.custom-loans` (wrapper) yang me-render `<x-table.index>` dengan `presenter` dari `CustomAssetLoanPresenter::dataTableLayout()` dan `api_url` ke `route('api.customLoans.index')`. **Dilarang** deklarasi array kolom JS di blade index. `@include('partials.bootstrap-table')` hanya di `@section('moar_scripts')`.
+5. **Kolom index:** satu-satunya sumber dari Presenter (`document_number`, `branch_location`, `borrower`, `planned_dates`, `status`, `actions`) — bukan array hardcoded di view.
+6. **Status badge:** satu sumber kebenaran `CustomAssetLoanPresenter::statusBadges()` yang dipakai `statusLabel()` di presenter dan formatter JS. Dilarang ternary status yang disalin-copy.
+7. **Formatter JS:** `customLoansLinkFormatter`, `customLoansActionsFormatter`, `statusFormatter`, `dateDisplayFormatter`, `branchFormatter` terdaftar di `partials/bootstrap-table.blade.php`.
+8. **No inline style warna/background/border/layout** (kecuali spacing minor atau warna dinamis berbasis data).
+9. **Tanggal:** wajib `Helper::getFormattedDateObject()`; dilarang `->format('d M Y H:i')` di view.
+10. **Terjemahan:** `{{ trans('general.key') ?? 'Fallback Bahasa Indonesia' }}`; aksi dibungkus `@can('custom-loan.action', $loan)`.
+11. **Nilai kosong:** tampilkan `-` untuk kolom/relasi null.
+12. **Semua state-changing:** form `POST` + `@csrf`; dropdown status label di-load dari controller (`$statusLabels`), **bukan hardcoded option**.
+13. **Field item form:** `items[i][asset_id]`, `items[i][accessory_id]`, `items[i][component_id]`, `items[i][license_id]`, `items[i][parent_asset_id]`.
+14. **Manifest (show):** satu tabel `table.table.table-striped` dalam `table-responsive`, kolom `#`, `Tipe`, `Item`, `Qty Pinjam`, `Qty Kembali`, `Status`, `Kondisi`, `Catatan`; empty state `callout callout-info`.
+15. **Aksi workflow:** di `box-footer` (release, approve-loan, return-received, complete-return, compensation, cancel), bukan di header, dan tidak via GET.
+16. **Modal konfirmasi:** `modal`, `modal-dialog`, `modal-content`, `@csrf`, validasi client + server `cancellation_notes`.
+17. **Komentar:** `{{-- KUSTOM erickalvino-MODULE_LOAN: ... --}}`.
+
+## 📄 12.3 `custom-loans/index.blade.php` (Archetype A)
 
 ```blade
+{{-- KUSTOM erickalvino-MODULE_LOAN: Archetype INDEX --}}
 @extends('layouts/default')
-@section('title')
-    {{ trans('custom.module_loan') }} @parent
+
+@section('title0')
+    {{ trans('custom.module_loan') ?? 'Asset Loan & Request' }}
 @stop
+
+@section('title')
+    @yield('title0') @parent
+@stop
+
+@section('header_right')
+    @can('create', \App\Models\CustomAssetLoan::class)
+        <a href="{{ route('customLoans.create') }}" class="btn btn-primary pull-right">
+            <x-icon type="new" />
+            {{ trans('general.create') ?? 'Buat Baru' }}
+        </a>
+    @endcan
+@stop
+
 @section('content')
-<div class="row">
-  <div class="col-md-12">
-    <div class="box box-default">
-      <div class="box-header with-border">
-        <h3 class="box-title"><i class="fa fa-exchange"></i> {{ trans('custom.module_loan') }}</h3>
-        <div class="box-tools pull-right">
-          @can('create', \App\Models\CustomAssetLoan::class)
-            <a href="{{ route('customLoans.create') }}" class="btn btn-primary btn-sm"><i class="fa fa-plus"></i> {{ trans('general.create') }}</a>
-          @endcan
-        </div>
-      </div>
-      <div class="box-body">
-        @include('partials.bootstrap-table', [
-          'url' => route('api.customLoans.index'),
-          'id' => 'customLoansTable',
-          'cookie' => 'customLoansTableCookie',
-          'columns' => [
-            ['field'=>'document_number','title'=>trans('custom.field.document_number'),'sortable'=>true],
-            ['field'=>'branch_location','title'=>trans('custom.field.branch'),'sortable'=>true],
-            ['field'=>'borrower','title'=>trans('general.user'),'sortable'=>true],
-            ['field'=>'planned_dates','title'=>trans('custom.field.planned_dates'),'sortable'=>true],
-            ['field'=>'status','title'=>trans('general.status'),'sortable'=>true],
-            ['field'=>'actions','title'=>trans('general.actions'),'sortable'=>false,'searchable'=>false],
-          ],
-        ])
-      </div>
-    </div>
-  </div>
-</div>
-@include('custom-loans.partials.void-modal')
+    <x-container>
+        <x-box name="custom_loans">
+            <x-table.custom-loans :route="route('api.customLoans.index')" />
+        </x-box>
+    </x-container>
+@stop
+
+@section('moar_scripts')
+    @include('partials.bootstrap-table')
 @stop
 ```
 
-## 📄 12.4 `edit-checking.blade.php` (QC form — tanpa hardcode status)
+## 📄 12.4 `blade/table/custom-loans.blade.php` (wrapper `x-table`)
+
+```blade
+@props([
+    'route' => route('api.customLoans.index'),
+    'name' => 'custom-loans',
+    'fixed_right_number' => 2,
+    'fixed_number' => 1,
+    'table_header' => trans('custom.module_loan') ?? 'Asset Loan',
+])
+
+@can('view', \App\Models\CustomAssetLoan::class)
+    <x-slot:table_header>
+        {{ $table_header }}
+    </x-slot:table_header>
+
+    <x-table
+        :presenter="\App\Presenters\CustomAssetLoanPresenter::dataTableLayout()"
+        :$fixed_right_number
+        :$fixed_number
+        show_column_search="true"
+        show_advanced_search="true"
+        buttons="customLoansButtons"
+        api_url="{{ $route }}"
+        export_filename="export-custom-loans-{{ date('Y-m-d') }}"
+    />
+@endcan
+```
+
+## 📄 12.5 `custom-loans/show.blade.php` (Archetype SHOW-DOKUMEN)
+
+```blade
+{{-- KUSTOM erickalvino-MODULE_LOAN: Archetype SHOW-DOKUMEN --}}
+@extends('layouts/default')
+
+@section('title')
+    {{ $loan->document_number ?? trans('custom.title.loan_detail') ?? 'Detail Peminjaman' }}
+@stop
+
+@section('header_right')
+    <a href="{{ route('customLoans.index') }}" class="btn btn-default">
+        <i class="fa fa-arrow-left"></i> {{ trans('general.back') ?? 'Kembali' }}
+    </a>
+    @can('update', $loan)
+        <a href="{{ route('customLoans.edit', $loan->id) }}" class="btn btn-primary">
+            <x-icon type="edit" /> {{ trans('general.edit') ?? 'Edit' }}
+        </a>
+    @endcan
+@stop
+
+@section('content')
+    <x-container>
+        <x-box name="custom_loan" box_style="default"
+               :header="trans('custom.title.loan') ?? 'Peminjaman' . ': ' . ($loan->document_number ?? $loan->id)">
+            <div class="row">
+                <div class="col-md-12">
+                    <x-well>
+                        <x-info-element title="{{ trans('custom.field.document_number') ?? 'No. Dokumen' }}" icon_type="file">
+                            {{ $loan->document_number ?? '-' }}
+                            <x-copy-to-clipboard :copy_what="$loan->document_number ?? ''" />
+                        </x-info-element>
+                        @php $planned = Helper::getFormattedDateObject($loan->planned_checkout_date, 'date'); @endphp
+                        <x-info-element title="{{ trans('custom.field.planned_dates') ?? 'Rencana' }}" icon_type="calendar">
+                            {{ $loan->planned_checkout_date ? $planned['formatted'] : '-' }} s.d {{ $loan->planned_return_date ? Helper::getFormattedDateObject($loan->planned_return_date, 'date')['formatted'] : '-' }}
+                        </x-info-element>
+                        <x-info-element title="{{ trans('general.status') ?? 'Status' }}" icon_type="status">
+                            <span class="label {{ $loan->present()->statusBadgeClass() }}">{{ $loan->present()->statusText() }}</span>
+                        </x-info-element>
+                        <x-info-element title="{{ trans('custom.field.branch') ?? 'Cabang' }}" icon_type="location">
+                            {{ $loan->location?->name ?? '-' }}
+                        </x-info-element>
+                        @if ($loan->borrower)
+                            <x-info-element title="{{ trans('general.user') ?? 'Pemohon/Peminjam' }}" icon_type="user">
+                                <a href="{{ route('users.show', $loan->borrower_id) }}">{{ $loan->borrower->getFullNameAttribute() }}</a>
+                            </x-info-element>
+                        @endif
+                        <x-info-element title="{{ trans('general.notes') ?? 'Catatan' }}" icon_type="note">
+                            {{ $loan->notes ?: '-' }}
+                        </x-info-element>
+                    </x-well>
+                </div>
+            </div>
+
+            {{-- Manifest --}}
+            <div class="row">
+                <div class="col-md-12">
+                    <h3 class="box-title">{{ trans('general.items') ?? 'Item' }} ({{ $loan->items->count() }})</h3>
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>{{ trans('general.item_type') ?? 'Tipe' }}</th>
+                                    <th>{{ trans('general.item') ?? 'Item' }}</th>
+                                    <th class="text-center">{{ trans('general.quantity') ?? 'Qty' }}</th>
+                                    <th>{{ trans('custom.field.return_status') ?? 'Status Kembali' }}</th>
+                                    <th>{{ trans('custom.field.condition') ?? 'Kondisi' }}</th>
+                                    <th>{{ trans('general.notes') ?? 'Catatan' }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @forelse ($loan->items as $item)
+                                <tr>
+                                    <td>{{ $loop->iteration }}</td>
+                                    <td><span class="label label-info">{{ ucfirst($item->item_type) }}</span></td>
+                                    <td><strong>{{ $item->asset?->asset_tag ?? $item->component?->name ?? $item->accessory?->name ?? $item->license?->name ?? $item->item_name ?? '-' }}</strong></td>
+                                    <td class="text-center"><span class="label label-success">{{ $item->qty_borrowed }}</span></td>
+                                    <td>{{ $item->return_check_status ?? '-' }}</td>
+                                    <td>{{ $item->condition_at_return ?? '-' }}</td>
+                                    <td>{{ $item->notes ?: '-' }}</td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="7"><div class="callout callout-info">{{ trans('general.no_results') ?? 'Tidak ada item terdaftar.' }}</div></td>
+                                </tr>
+                            @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <x-slot name="customfooter">
+                <div class="box-footer">
+                    {{-- Workflow actions: release/approve-loan/return-received/complete-return/compensation/cancel --}}
+                </div>
+            </x-slot>
+        </x-box>
+    </x-container>
+@stop
+```
+
+## 📄 12.6 FORM (Archetype D) — `create.blade.php` / `edit.blade.php`
+
+- `@extends('layouts/default')`, `@section('title')` dengan trans + fallback, `@section('content')` berisi `<x-container><x-box name="custom_loan">`.
+- `box-body` dihasilkan otomatis oleh `x-box`; field dokumen + item form (asset/accessory/component/license/parent_asset_id) dan relasi memakai `select2`; footer default cancel/save muncul bila `x-box` diberi prop `route`, atau gunakan slot `customfooter`. Form yang mengikuti CRUD core memakai `@extends('layouts/edit-form', [...])` + `@section('inputFields')`.
+- Semua form `POST` + `@csrf`; edit memakai `@method('PUT')`.
+
+## 📄 12.7 `edit-checking.blade.php` (QC form — tanpa hardcode status)
 
 ```blade
 @extends('layouts/default')
@@ -1460,14 +1606,12 @@ Route::group(['prefix'=>'v1/custom','middleware'=>['auth:api']], function () {
     {{ trans('custom.title.return_qc') }} - {{ $loan->document_number }} @parent
 @stop
 @section('content')
-<form method="POST" action="{{ route('customLoans.complete-return', $loan->id) }}">
-  @csrf
-  <div class="box box-default">
-    <div class="box-header">
-      <h3 class="box-title">{{ trans('custom.title.return_qc') }}</h3>
-    </div>
-    <div class="box-body">
-      <table class="table table-bordered">
+<x-container>
+    <x-box name="custom_loan_return_qc" box_style="default">
+        <form method="POST" action="{{ route('customLoans.complete-return', $loan->id) }}">
+            @csrf
+            <div class="box-body">
+                <table class="table table-striped">
         <thead>
           <tr>
             <th>Item</th><th>Qty Pinjam</th><th>Qty Kembali</th>
@@ -1512,28 +1656,38 @@ Route::group(['prefix'=>'v1/custom','middleware'=>['auth:api']], function () {
           @endforeach
         </tbody>
       </table>
-    </div>
-    <div class="box-footer text-right">
-      <button type="submit" class="btn btn-success">{{ trans('general.submit') }}</button>
-    </div>
-  </div>
-</form>
+            </div>
+            <div class="box-footer text-right">
+                <a href="{{ route('customLoans.show', $loan->id) }}" class="btn btn-default">{{ trans('button.cancel') ?? 'Batal' }}</a>
+                <button type="submit" class="btn btn-primary">{{ trans('button.save') ?? 'Simpan' }}</button>
+            </div>
+        </form>
+    </x-box>
+</x-container>
 @stop
 ```
 
-## 📄 12.5 `void-modal.blade.php`
+## 📄 12.8 `void-modal.blade.php`
 
 ```blade
-<div class="modal fade" id="cancelLoanModal">
+<div class="modal fade" id="cancelLoanModal" role="dialog">
   <div class="modal-dialog">
-    <form id="cancelLoanForm" method="POST">
+    <form id="cancelLoanForm" method="POST" action="{{ route('customLoans.cancel', $loan->id) }}">
       @csrf
       <div class="modal-content">
-        <div class="modal-header"><h4>{{ trans('custom.modal.void_title') }}</h4></div>
-        <div class="modal-body">
-          <textarea class="form-control" name="cancellation_notes" rows="4" required></textarea>
+        <div class="modal-header">
+          <button type="button" class="close" data-dismiss="modal">&times;</button>
+          <h4 class="modal-title">{{ trans('custom.modal.void_title') ?? 'Batalkan Peminjaman' }}</h4>
         </div>
-        <div class="modal-footer"><button type="submit" class="btn btn-danger">{{ trans('general.submit') }}</button></div>
+        <div class="modal-body">
+          <label for="cancellation_notes">{{ trans('custom.field.cancellation_notes') ?? 'Alasan Pembatalan' }}</label>
+          <textarea class="form-control" name="cancellation_notes" id="cancellation_notes" rows="4" required></textarea>
+          <span class="text-danger" role="alert">{{ trans('custom.modal.void_min') ?? 'Alasan minimal 15 karakter.' }}</span>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-default" data-dismiss="modal">{{ trans('general.close') ?? 'Tutup' }}</button>
+          <button type="submit" class="btn btn-danger">{{ trans('general.submit') ?? 'Simpan' }}</button>
+        </div>
       </div>
     </form>
   </div>
@@ -1546,11 +1700,13 @@ Route::group(['prefix'=>'v1/custom','middleware'=>['auth:api']], function () {
 # 📌 BAGIAN 13: PRESENTER & TRANSFORMER
 # ------------------------------------------------------------------------------
 
-## 📄 13.1 `CustomAssetLoanPresenter.php`
+## 📄 13.1 `CustomAssetLoanPresenter.php` (pola `AssetPresenter` v8.6.3)
+
+Presenter adalah **satu sumber kebenaran** untuk kolom tabel index dan label status.
 
 ```php
 <?php
-// erickalvino-MODULE_LOAN: Presenter status peminjaman
+// erickalvino-MODULE_LOAN: Presenter peminjaman
 namespace App\Presenters;
 
 use App\Presenters\Presenter;
@@ -1559,21 +1715,56 @@ use Illuminate\Support\Str;
 
 class CustomAssetLoanPresenter extends Presenter
 {
+    public static function dataTableLayout(array $hide_fields = []): string
+    {
+        $layout = [
+            ['field' => 'checkbox', 'checkbox' => true, 'printIgnore' => true, 'class' => 'hidden-print', 'searchable' => false, 'sortable' => false, 'switchable' => false, 'title' => ''],
+            ['field' => 'document_number', 'title' => trans('custom.field.document_number'), 'searchable' => true, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'customLoansLinkFormatter'],
+            ['field' => 'branch_location', 'title' => trans('custom.field.branch'), 'searchable' => true, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'branchFormatter'],
+            ['field' => 'borrower', 'title' => trans('general.user'), 'searchable' => true, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'customLoansBorrowerFormatter'],
+            ['field' => 'planned_dates', 'title' => trans('custom.field.planned_dates'), 'searchable' => false, 'sortable' => false, 'switchable' => true, 'visible' => true, 'formatter' => 'dateDisplayFormatter'],
+            ['field' => 'status', 'title' => trans('general.status'), 'searchable' => false, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'statusFormatter'],
+            ['field' => 'actions', 'title' => trans('table.actions'), 'searchable' => false, 'sortable' => false, 'switchable' => false, 'visible' => true, 'formatter' => 'customLoansActionsFormatter'],
+        ];
+
+        foreach ($hide_fields as $hide) {
+            foreach ($layout as $key => $column) {
+                if ($column['field'] === $hide) {
+                    $layout[$key]['visible'] = false;
+                }
+            }
+        }
+
+        return json_encode($layout);
+    }
+
+    public static function statusBadges(): array
+    {
+        return [
+            'DRAFT'               => 'default',
+            'PENDING_APPROVAL'    => 'warning',
+            'ON_LOAN'             => 'info',
+            'PENDING_RETURN_QC'   => 'info',
+            'PENDING_COMPENSATION'=> 'danger',
+            'RETURNED'            => 'success',
+            'CANCELLED'           => 'danger',
+        ];
+    }
+
+    public function statusBadgeClass(): string
+    {
+        return 'label-'.(static::statusBadges()[$this->model->status] ?? 'default');
+    }
+
+    public function statusText(): string
+    {
+        $key = 'custom.status.'.Str::snake($this->model->status);
+        return Lang::has($key) ? trans($key) : $this->model->status;
+    }
+
     public function statusLabel(): string
     {
-        $class = match($this->model->status) {
-            'DRAFT' => 'label-default',
-            'PENDING_APPROVAL' => 'label-warning',
-            'ON_LOAN' => 'label-info',
-            'PENDING_RETURN_QC' => 'label-primary',
-            'PENDING_COMPENSATION' => 'label-danger',
-            'RETURNED' => 'label-success',
-            'CANCELLED' => 'label-danger',
-            default => 'label-default',
-        };
-        $key = 'custom.status.'.Str::snake($this->model->status);
-        $text = Lang::has($key) ? trans($key) : $this->model->status;
-        return '<span class="label '.$class.'">'.e($text).'</span>';
+        return '<span class="label '.$this->statusBadgeClass().'">'.e($this->statusText()).'</span>';
     }
 
     public function documentNumber(): string
@@ -1582,66 +1773,143 @@ class CustomAssetLoanPresenter extends Presenter
             ? '<code class="text-bold">'.e($this->model->document_number).'</code>'
             : '<span class="text-muted"><i>DRAFT</i></span>';
     }
+
+    public function borrower(): string
+    {
+        return $this->model->borrower
+            ? '<a href="'.route('users.show', $this->model->borrower_id).'">'.e($this->model->borrower->getFullNameAttribute()).'</a>'
+            : '-';
+    }
 }
 ```
 
-## 📄 13.2 `CustomAssetLoansTransformer.php`
+## 📄 13.2 `CustomAssetLoansTransformer.php` (pola `AssetsTransformer` v8.6.3)
 
 ```php
 <?php
 // erickalvino-MODULE_LOAN: Transformer list peminjaman
-namespace App\Transformers;
+namespace App\Http\Transformers;
 
+use App\Helpers\Helper;
+use App\Http\Transformers\DatatablesTransformer;
 use App\Models\CustomAssetLoan;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Gate;
 
 class CustomAssetLoansTransformer
 {
-    public function transformCustomAssetLoan(CustomAssetLoan $loan): array
+    public function transformCustomLoans(Collection $items, $total)
+    {
+        $array = [];
+        foreach ($items as $item) {
+            $array[] = $this->transformCustomLoan($item);
+        }
+
+        return (new DatatablesTransformer)->transformDatatables($array, $total);
+    }
+
+    public function transformCustomLoan(CustomAssetLoan $loan): array
     {
         return [
             'id' => (int) $loan->id,
             'document_number' => $loan->present()->documentNumber(),
-            'branch_location' => $loan->location?->name ?? '-',
-            'borrower' => $loan->borrower ? '<a href="'.route('users.show',$loan->borrower_id).'">'.e($loan->borrower->first_name.' '.$loan->borrower->last_name).'</a>' : '-',
-            'planned_dates' => date('d/m/Y', strtotime($loan->planned_checkout_date)).' s.d '.date('d/m/Y', strtotime($loan->planned_return_date)),
-            'actual_checkout' => $loan->actual_checkout_date ? date('d/m/Y H:i', strtotime($loan->actual_checkout_date)) : '-',
-            'actual_return' => $loan->actual_return_date ? date('d/m/Y H:i', strtotime($loan->actual_return_date)) : '-',
+            'branch_location' => e($loan->location?->name ?? '-'),
+            'borrower' => $loan->present()->borrower(),
+            'planned_dates' => $this->formatPlan($loan),
+            'actual_checkout' => Helper::getFormattedDateObject($loan->actual_checkout_date, 'datetime'),
+            'actual_return' => Helper::getFormattedDateObject($loan->actual_return_date, 'datetime'),
             'status' => $loan->present()->statusLabel(),
             'actions' => $this->generateActionButtons($loan),
         ];
     }
 
+    private function formatPlan(CustomAssetLoan $loan): string
+    {
+        $checkout = $loan->planned_checkout_date ? Helper::getFormattedDateObject($loan->planned_checkout_date, 'date')['formatted'] : '-';
+        $return = $loan->planned_return_date ? Helper::getFormattedDateObject($loan->planned_return_date, 'date')['formatted'] : '-';
+        return $checkout.' s.d '.$return;
+    }
+
     private function generateActionButtons(CustomAssetLoan $loan): string
     {
-        $adminUserId = auth()->id();
         $html = '<div class="btn-group pull-right"><button class="btn btn-default btn-sm dropdown-toggle" data-toggle="dropdown">'.e(__('general.actions')).' <span class="caret"></span></button><ul class="dropdown-menu pull-right">';
 
-        if ($loan->status === 'DRAFT' && ($loan->created_by === $adminUserId || auth()->user()->isSuperUser())) {
-            $html .= '<li><a href="'.route('customLoans.release',$loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.__('custom.action.release').'</a></li>';
+        if ($loan->status === 'DRAFT' && Gate::allows('release', $loan)) {
+            $html .= '<li><a href="'.route('customLoans.release', $loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.e(__('custom.action.release')).'</a></li>';
         }
-        if ($loan->status === 'PENDING_APPROVAL' && Gate::allows('approve',$loan)) {
-            $html .= '<li><a href="'.route('customLoans.approve-loan',$loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.__('custom.action.approve').'</a></li>';
+        if ($loan->status === 'PENDING_APPROVAL' && Gate::allows('approve-loan', $loan)) {
+            $html .= '<li><a href="'.route('customLoans.approve-loan', $loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.e(__('custom.action.approve')).'</a></li>';
         }
-        if ($loan->status === 'ON_LOAN' && Gate::allows('edit',$loan)) {
-            $html .= '<li><a href="'.route('customLoans.return-received',$loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.__('custom.action.return_process').'</a></li>';
+        if ($loan->status === 'ON_LOAN' && Gate::allows('return-received', $loan)) {
+            $html .= '<li><a href="'.route('customLoans.return-received', $loan->id).'" data-method="post" data-csrf="'.csrf_token().'">'.e(__('custom.action.return_process')).'</a></li>';
         }
-        if ($loan->status === 'PENDING_RETURN_QC' && Gate::allows('edit',$loan)) {
-            $html .= '<li><a href="'.route('customLoans.edit-checking',$loan->id).'">'.__('custom.action.qc_verify').'</a></li>';
+        if ($loan->status === 'PENDING_RETURN_QC' && Gate::allows('edit', $loan)) {
+            $html .= '<li><a href="'.route('customLoans.edit-checking', $loan->id).'">'.e(__('custom.action.qc_verify')).'</a></li>';
         }
-        if (in_array($loan->status,['PENDING_APPROVAL','ON_LOAN','PENDING_RETURN_QC']) && Gate::allows('void',$loan)) {
-            $html .= '<li><a href="#" class="cancel-loan-trigger" data-id="'.$loan->id.'" data-toggle="modal" data-target="#cancelLoanModal">'.__('custom.action.void').'</a></li>';
+        if (in_array($loan->status, ['PENDING_APPROVAL', 'ON_LOAN', 'PENDING_RETURN_QC']) && Gate::allows('cancel', $loan)) {
+            $html .= '<li><a href="#" class="cancel-loan-trigger" data-id="'.$loan->id.'" data-toggle="modal" data-target="#cancelLoanModal">'.e(__('custom.action.void')).'</a></li>';
         }
-        if (! in_array($loan->status,['DRAFT','CANCELLED']) && Gate::allows('custom-loan.print')) {
-            $html .= '<li><a href="'.route('customLoans.print-pdf',$loan->id).'" target="_blank">'.__('custom.action.print').'</a></li>';
+        if (! in_array($loan->status, ['DRAFT', 'CANCELLED']) && Gate::allows('print-pdf', $loan)) {
+            $html .= '<li><a href="'.route('customLoans.print-pdf', $loan->id).'" target="_blank">'.e(__('custom.action.print')).'</a></li>';
         }
         $html .= '</ul></div>';
+
         return $html;
     }
 }
 ```
 
----
+> Location/namespace WAJIB `App\Http\Transformers` (bukan `App\Transformers`), menyesuaikan v8.6.3.
+
+## 📄 13.3 Output API index (dikonsumsi bootstrap-table)
+
+```json
+{
+  "total": 80,
+  "rows": [
+    { "document_number": "...", "branch_location": "Bandung", "borrower": "<a href=\"...\">Budi</a>", "planned_dates": "31/08/2026 s.d 05/09/2026", "status": "<span class=\"label label-info\">On Loan</span>", "actions": "..." }
+  ],
+  "current_page": 1,
+  "per_page": 50,
+  "total_pages": 2,
+  "prev_page_url": null,
+  "next_page_url": "https://example.test/api/v1/custom/loans?page=2"
+}
+```
+
+## 📄 13.4 API Controller `index()` (memakai transformer)
+
+```php
+<?php
+// erickalvino-MODULE_LOAN: API index memakai transformer + DatatablesTransformer
+namespace App\Http\Controllers\Api;
+
+use App\Http\Transformers\CustomAssetLoansTransformer;
+use App\Models\CustomAssetLoan;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class CustomAssetLoansController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $this->authorize('view', CustomAssetLoan::class);
+
+        $items = CustomAssetLoan::with(['location', 'borrower', 'items'])
+            ->filterByCompany()
+            ->filterByLocation($request->get('location'))
+            ->filterByStatus($request->get('status'))
+            ->orderBy('created_at', 'desc')
+            ->paginate($request->get('limit', 50));
+
+        $transformer = new CustomAssetLoansTransformer;
+
+        return response()->json(
+            $transformer->transformCustomLoans($items->getCollection(), $items->total())
+        );
+    }
+}
+```
 
 # ------------------------------------------------------------------------------
 # 📌 BAGIAN 14: TRANSLASI
@@ -1809,7 +2077,7 @@ class CustomAssetLoanEnterpriseTest extends TestCase
 |---|---|
 | A | Config/env, BranchResolver, LoanStatusResolver, migration final |
 | B | Models, Policy, Reservation/License/Accessory/Quarantine service, Controller, Routes |
-| C | Views (index/create/edit-checking/print), Presenter, Transformer, Translation |
+| C | Views (index + show + create/edit/edit-checking/print, memakai `x-table` + presenter `dataTableLayout`), Presenter (`statusBadges`/`statusLabel`), Transformer (`DatatablesTransformer`), Translation |
 | D | Factory, Feature test, QC manual TC-01..TC-10, verifikasi skema v8.6.3 |
 
 ---

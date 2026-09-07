@@ -1,0 +1,1324 @@
+# PRD - Product Requirements Document
+## Kustom Modul Snipe-IT (erickalvino)
+### Versi: 1.0 — FINAL
+### Tanggal: 23 Juli 2026
+
+---
+
+## DAFTAR ISI
+
+1. [Pendahuluan & Tujuan](#1-pendahuluan--tujuan)
+2. [Arsitektur Umum Modul Kustom](#2-arsitektur-umum-modul-kustom)
+3. [Standar Komponen Per Modul](#3-standar-komponen-per-modul)
+   - 3.1 [Model](#31-model)
+   - 3.2 [Migration](#32-migration)
+   - 3.3 [Policy](#33-policy)
+   - 3.4 [Presenter](#34-presenter)
+   - 3.5 [Transformer (API)](#35-transformer-api)
+   - 3.6 [Form Request](#36-form-request)
+   - 3.7 [API Controller](#37-api-controller)
+   - 3.8 [Web Controller (CRUD)](#38-web-controller-crud)
+   - 3.9 [Bulk Controller](#39-bulk-controller)
+   - 3.10 [Blade Views](#310-blade-views)
+4. [Standar Integrasi Global](#4-standar-integrasi-global)
+   - 4.1 [Routes (web.php)](#41-routes-webphp)
+   - 4.2 [Routes (api.php)](#42-routes-apiphp)
+   - 4.3 [Permissions (config/permissions.php)](#43-permissions-configpermissionsphp)
+   - 4.4 [AuthServiceProvider](#44-authserviceprovider)
+   - 4.5 [Language Files](#45-language-files)
+   - 4.6 [Layout & Bootstrap Table Partial](#46-layout--bootstrap-table-partial)
+5. [Pola Status Workflow](#5-pola-status-workflow)
+6. [Pola Multi-Item (Batch/Child Items)](#6-pola-multi-item-batchchild-items)
+7. [Naming Convention & Standar Kode](#7-naming-convention--standar-kode)
+8. [Daftar Modul yang Sudah Diimplementasi](#8-daftar-modul-yang-sudah-diimplementasi)
+9. [Lampiran: Cheat Sheet Pembuatan Modul Baru](#9-lampiran-cheat-sheet-pembuatan-modul-baru)
+
+---
+
+## 1. Pendahuluan & Tujuan
+
+Dokumen ini mendefinisikan **Product Requirements Document (PRD)** untuk seluruh modul kustom yang dikembangkan oleh **erickalvino** di atas platform Snipe-IT. Tujuan utama PRD adalah:
+
+1. Mendokumentasikan **pola arsitektur baku** yang digunakan di semua modul kustom.
+2. Menyediakan **blueprint/referensi** bagi pengembang untuk membuat modul baru secara konsisten.
+3. Memastikan **keseragaman kode**, **maintainability**, dan **kemudahan onboarding** kontributor baru.
+
+PRD ini disusun berdasarkan analisis menyeluruh terhadap implementasi modul **AssetMutation (AM)** sebagai referensi utama, dan **AssetDisposal (AD)** serta **PurchaseRequest (PR)** sebagai referensi pendukung.
+
+---
+
+## 2. Arsitektur Umum Modul Kustom
+
+Setiap modul kustom mengikuti arsitektur **MVC (Model-View-Controller)** standar Laravel, ditambah lapisan-lapisan berikut yang mengadopsi pola bawaan Snipe-IT:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     LAYER VIEW (Blade)                       │
+│  ┌──────────┬──────────┬──────────┬──────────────────┐      │
+│  │ index    │  edit    │  show    │ blade/table/*.blade│     │
+│  └──────────┴──────────┴──────────┴──────────────────┘      │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER CONTROLLER (Web)                     │
+│  ┌──────────────────────┬────────────────────────────────┐   │
+│  │ {Module}Controller   │ Bulk{Module}Controller         │   │
+│  │ (CRUD + Actions)     │ (Bulk Delete)                  │   │
+│  └──────────────────────┴────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER CONTROLLER (API)                     │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ Api\{Modules}Controller                               │   │
+│  │ (RESTful CRUD + custom actions)                      │   │
+│  └──────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER REQUEST                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ {Action}StoreRequest  (Form Request Validation)      │   │
+│  └──────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER TRANSFORMER (API)                    │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ {Modules}Transformer  (API Response Formatting)      │   │
+│  └──────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER PRESENTER                            │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ {Module}Presenter  (dataTableLayout + titles)        │   │
+│  └──────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER POLICY                               │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ {Module}Policy  (Authorization: CRUD + custom)       │   │
+│  └──────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                   LAYER MODEL (Eloquent)                     │
+│  ┌──────────────────────┬────────────────────────────────┐   │
+│  │ {Module} (Parent)    │ {Module}Item (Child, optional) │   │
+│  └──────────────────────┴────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Integrasi Global (Snipe-IT Core)
+```
+┌──────────────────────────────────────────────────────────────┐
+│  routes/web.php    → Route resource + action routes          │
+│  routes/api.php     → API resource routes                    │
+│  config/permissions.php → Permission group definitions       │
+│  AuthServiceProvider    → Policy maps + Gate definitions     │
+│  resources/lang/*/general.php → Translations                 │
+│  resources/lang/*/permissions.php → Permission translations  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Standar Komponen Per Modul
+
+### 3.1 Model
+
+**Lokasi:** `app/Models/{Module}.php` dan opsional `app/Models/{Module}Item.php`
+
+**Pola AssetMutation (Referensi Utama):**
+
+```php
+<?php
+
+namespace App\Models;
+
+use App\Models\Trails\Searchable;
+use App\Presenters\Presentable;
+use Illuminate\Database\Eloquent\Model;
+
+class AssetMutation extends Model
+{
+    // KUSTOM erickalvino-AM — dokumentasi singkat modul
+
+    use Presentable;
+    use SoftDeletes;     // jika perlu soft delete
+
+    protected $presenter = AssetMutationPresenter::class;
+
+    protected $fillable = [
+        'document_number',
+        'origin_location_id',
+        // ... semua field yang bisa di-mass assign
+    ];
+
+    protected $casts = [
+        'is_insured' => 'boolean',
+        'estimated_arrival_date' => 'date',
+        'completed_date' => 'datetime',
+    ];
+
+    protected $appends = [
+        'status_text',
+        'total_items',
+    ];
+
+    // === RELATIONSHIPS ===
+    public function originLocation(): BelongsTo { ... }
+    public function destinationLocation(): BelongsTo { ... }
+    public function items(): HasMany { ... }       // child items
+    public function user(): BelongsTo { ... }
+
+    // === SCOPES / ACCESSORS / MUTATORS ===
+    public function getStatusTextAttribute(): string { ... }
+    public function getTotalItemsAttribute(): int { ... }
+
+    // === BOOT / EVENTS ===
+    protected static function booted(): void
+    {
+        static::creating(function ($mutation) {
+            // auto-generate document_number
+        });
+    }
+}
+```
+
+**Aturan Umum Model:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Namespace** | `App\Models` |
+| **Trait Presentable** | WAJIB digunakan agar Presenter berfungsi |
+| **Property $presenter** | WAJIB didefinisikan sesuai Presenter class |
+| **Property $fillable** | Gunakan whitelist, jangan `$guarded` |
+| **Property $casts** | Cast date, datetime, boolean, array, dll |
+| **SoftDeletes** | Gunakan jika data perlu di-archive/dihapus sementara |
+| **Kode komentar** | `// KUSTOM erickalvino-XX: deskripsi` di baris pertama class |
+| **Child Model** | Pisahkan item/batch ke model terpisah jika memiliki banyak field sendiri |
+
+**Pola Child Model (AssetItem):**
+
+```php
+class AssetItem extends Model
+{
+    use SoftDeletes;
+
+    protected $fillable = [
+        'itemable_id',
+        'itemable_type',
+        'asset_id',
+        'new_asset_tag',
+        'condition_before',
+        'condition_after',
+        'notes',
+    ];
+
+    // Polymorphic relationship
+    public function itemable(): MorphTo { ... }
+    public function asset(): BelongsTo { ... }
+}
+```
+
+---
+
+### 3.2 Migration
+
+**Lokasi:** `database/migrations/YYYY_MM_DD_HHMMSS_create_{module_table}.php`
+
+**Aturan Umum Migration:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Naming Pattern** | `create_{plural_table_name}_table.php` |
+| **Timestamp** | Gunakan tanggal yang terurut, bisa di masa depan (e.g. 2026_07_22) |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+| **Index** | Tambahkan index untuk foreign key dan kolom yang sering di-query |
+| **Foreign Keys** | Gunakan constrained() -> cascadeOnDelete() |
+| **Soft Deletes** | Tambahkan `softDeletes()` jika perlu |
+| **Pivot / Polymorphic** | Child table menggunakan morphs() untuk polymorphic |
+
+**Struktur Migration Parent:**
+
+```php
+Schema::create('asset_mutations', function (Blueprint $table) {
+    $table->id();
+    $table->string('document_number')->unique();
+    $table->foreignId('origin_location_id')->constrained('locations');
+    $table->foreignId('destination_location_id')->constrained('locations');
+    $table->string('status')->default('draft');
+    $table->text('notes')->nullable();
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->index('status');
+    $table->index('document_number');
+});
+```
+
+**Struktur Migration Child (Multi-Item):**
+
+```php
+Schema::create('asset_items', function (Blueprint $table) {
+    $table->id();
+    // Polymorphic parent
+    $table->morphs('itemable');
+    // Field spesifik
+    $table->foreignId('asset_id')->constrained('assets');
+    $table->string('new_asset_tag');
+    $table->string('condition_before')->nullable();
+    $table->string('condition_after')->nullable();
+    $table->text('notes')->nullable();
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->unique('new_asset_tag');
+    $table->index(['itemable_id', 'itemable_type']);
+});
+```
+
+---
+
+### 3.3 Policy
+
+**Lokasi:** `app/Policies/{Module}Policy.php`
+
+**Aturan Umum Policy:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Nama Class** | `{Module}Policy` (StudlyCase, singular) |
+| **Method standar** | `view()`, `create()`, `update()`, `delete()` |
+| **Method kustom** | Tambahkan method sesuai aksi spesifik modul, misal: `ship()`, `receive()`, `reject()`, `complete()`, `cancel()` |
+| **Superuser bypass** | `return true;` jika user isSuperUser di method tertentu atau via `Gate::before` |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Policy:**
+
+```php
+class AssetMutationPolicy
+{
+    public function view(User $user): bool
+    {
+        return $user->hasAccess('assetmutations.view');
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->hasAccess('assetmutations.create');
+    }
+
+    public function update(User $user, AssetMutation $assetMutation): bool
+    {
+        return $user->hasAccess('assetmutations.edit')
+            && $assetMutation->status === 'draft'; // hanya draft bisa diedit
+    }
+
+    public function delete(User $user, AssetMutation $assetMutation): bool { ... }
+
+    // Aksi kustom
+    public function ship(User $user, AssetMutation $assetMutation): bool { ... }
+    public function receive(User $user, AssetMutation $assetMutation): bool { ... }
+    public function reject(User $user, AssetMutation $assetMutation): bool { ... }
+}
+```
+
+---
+
+### 3.4 Presenter
+
+**Lokasi:** `app/Presenters/{Module}Presenter.php`
+
+**Aturan Umum Presenter:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Parent Class** | Extends `App\Presenters\Presenter` |
+| **Method utama** | `public static function dataTableLayout()` return `json_encode($layout)` |
+| **Method judul** | `title0()` = singular, `title1()` = plural |
+| **Method admin** | `adminName()` return translation key |
+| **Field layout** | Array asosiatif dengan field, scope, searchable, sortable, switchable, title, visible, formatter |
+| **Formatter** | Gunakan formatter JavaScript yang sudah terdaftar di `bootstrap-table.js` atau buat fungsi global baru |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola dataTableLayout:**
+
+```php
+public static function dataTableLayout()
+{
+    $layout = [
+        [
+            'field' => 'checkbox',
+            'scope' => 'col',
+            'checkbox' => true,
+            'titleTooltip' => trans('general.select_all_none'),
+            'printIgnore' => true,
+            'class' => 'hidden-print',
+        ],
+        [
+            'field' => 'id',
+            'scope' => 'col',
+            'searchable' => false,
+            'sortable' => true,
+            'switchable' => true,
+            'title' => trans('general.id'),
+            'visible' => false,
+        ],
+        [
+            'field' => 'document_number',
+            'scope' => 'col',
+            'searchable' => true,
+            'sortable' => true,
+            'switchable' => false,
+            'title' => trans('general.asset_mutation_document_number'),
+            'visible' => true,
+            'formatter' => 'assetMutationsLinkFormatter',
+        ],
+        // ... field-field lainnya
+        [
+            'field' => 'actions',
+            'scope' => 'col',
+            'searchable' => false,
+            'sortable' => false,
+            'switchable' => false,
+            'title' => trans('table.actions'),
+            'visible' => true,
+            'formatter' => 'assetMutationsActionsFormatter',
+        ],
+    ];
+
+    return json_encode($layout);
+}
+```
+
+**Formatter JavaScript yang umum:**
+
+| Formatter | Fungsi |
+|-----------|--------|
+| `{module}LinkFormatter` | Membuat link ke detail (show) |
+| `{module}ActionsFormatter` | Dropdown/tombol aksi (edit, delete, ship, dll) |
+| `statusFormatter` | Menampilkan status dengan badge warna |
+| `currencyFormatter` | Format number menjadi mata uang |
+| `dateDisplayFormatter` | Format tanggal sesuai locale |
+| `locationsLinkObjFormatter` | Link ke halaman lokasi |
+| `companiesLinkObjFormatter` | Link ke halaman company |
+| `usersLinkObjFormatter` | Link ke halaman user |
+| `actionTypeFormatter` | Formatter untuk tipe aksi |
+
+---
+
+### 3.5 Transformer (API)
+
+**Lokasi:** `app/Http/Transformers/{Modules}Transformer.php`
+
+**Aturan Umum Transformer:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Parent Class** | Extends `App\Http\Transformers\ApiTransformer` (atau langsung `League\Fractal\TransformerAbstract`) |
+| **Method utama** | `public function transform({Module} ${module})` return array |
+| **Include** | Gunakan `include{Relation}` untuk relasi opsional |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Transformer:**
+
+```php
+class AssetMutationsTransformer extends TransformerAbstract
+{
+    protected $availableIncludes = [
+        'originLocation',
+        'destinationLocation',
+        'items',
+    ];
+
+    public function transform(AssetMutation $assetMutation): array
+    {
+        return [
+            'id' => $assetMutation->id,
+            'document_number' => $assetMutation->document_number,
+            'status' => $assetMutation->status,
+            'status_text' => $assetMutation->status_text,
+            'total_items' => $assetMutation->total_items,
+            'created_at' => $assetMutation->created_at,
+            'updated_at' => $assetMutation->updated_at,
+        ];
+    }
+
+    public function includeOriginLocation(AssetMutation $assetMutation): ?array { ... }
+    public function includeDestinationLocation(AssetMutation $assetMutation): ?array { ... }
+    public function includeItems(AssetMutation $assetMutation): ?array { ... }
+}
+```
+
+---
+
+### 3.6 Form Request
+
+**Lokasi:** `app/Http/Requests/{Action}StoreRequest.php`
+
+**Aturan Umum Form Request:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Parent Class** | Extends `Illuminate\Foundation\Http\FormRequest` |
+| **authorize()** | Return `true` karena policy sudah handle otorisasi di controller |
+| **rules()** | Definisikan aturan validasi lengkap dengan `required`, `exists`, `unique`, `different`, dll |
+| **messages()** | Berikan pesan error dalam Bahasa Indonesia (karena user Erick di Indonesia) |
+| **Custom logic** | Handle update vs create di rules() jika ada perbedaan validasi |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Form Request:**
+
+```php
+class MutationStoreRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true; // Policy sudah handle otorisasi
+    }
+
+    public function rules(): array
+    {
+        $rules = [
+            'field1' => 'required|integer|exists:table1,id',
+            'field2' => 'required|string|max:255',
+            'items' => 'required|array|min:1',
+            'items.*.asset_id' => 'required|integer|exists:assets,id',
+            'items.*.new_asset_tag' => [
+                'required', 'string', 'max:255',
+                Rule::unique('assets', 'asset_tag'),
+            ],
+        ];
+
+        // Update mode: adjust unique rules jika perlu
+        if ($this->isMethod('PUT') || $this->isMethod('PATCH')) {
+            // ...
+        }
+
+        return $rules;
+    }
+
+    public function messages(): array
+    {
+        return [
+            'field1.required' => 'Field 1 wajib diisi',
+            'items.required' => 'Minimal harus memilih 1 aset',
+            // ...
+        ];
+    }
+}
+```
+
+---
+
+### 3.7 API Controller
+
+**Lokasi:** `app/Http/Controllers/Api/{Modules}Controller.php`
+
+**Aturan Umum API Controller:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Nama Class** | `{Modules}Controller` (plural) |
+| **Method standar** | `index()`, `store()`, `show()`, `update()`, `destroy()` |
+| **Response format** | Gunakan helper `response()->json()` dengan struktur `['status' => 'success', 'data' => ..., ...]` |
+| **Authorization** | Panggil `$this->authorize()` untuk setiap aksi |
+| **Transformer** | Gunakan `$this->response->item()` atau `$this->response->collection()` dengan transformer |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola API Controller (mengikuti pola Snipe-IT):**
+
+```php
+class AssetMutationsController extends Controller
+{
+    public function index(): JsonResponse
+    {
+        $this->authorize('view', AssetMutation::class);
+        $mutations = AssetMutation::with(['originLocation', 'destinationLocation'])
+            ->orderBy('created_at', 'desc')
+            ->paginate(request()->get('limit', 50));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $mutations,
+            'total' => $mutations->total(),
+        ]);
+    }
+
+    public function store(MutationStoreRequest $request): JsonResponse
+    {
+        $this->authorize('create', AssetMutation::class);
+        // ... logic + response
+    }
+
+    // ... show, update, destroy
+}
+```
+
+---
+
+### 3.8 Web Controller (CRUD)
+
+**Lokasi:** `app/Http/Controllers/{Module}/{Modules}Controller.php`
+
+**Aturan Umum Web Controller:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Nama Class** | `{Modules}Controller` (plural) |
+| **Method standar** | `index()`, `create()`, `store()`, `show()`, `edit()`, `update()`, `destroy()` |
+| **Method aksi** | Tambahkan method untuk aksi non-CRUD: `ship()`, `receive()`, `reject()`, `complete()`, `cancel()` |
+| **View data** | Pass data ke view sesuai kebutuhan blade |
+| **Authorization** | Panggil `$this->authorize()` sebelum aksi |
+| **Redirect** | Redirect back dengan `->with('success', trans('...'))` atau `->with('error', trans('...'))` |
+| **Breadcrumbs** | Ikuti pola breadcrumb Snipe-IT saat ini (atau gunakan action/fallback) |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Web Controller:**
+
+```php
+class AssetMutationsController extends Controller
+{
+    public function index(): View
+    {
+        $this->authorize('view', AssetMutation::class);
+        return view('asset-mutations.index');
+    }
+
+    public function create(): View
+    {
+        $this->authorize('create', AssetMutation::class);
+        // Load data untuk dropdown (locations, companies, assets, dll)
+        return view('asset-mutations.edit')
+            ->with('item', new AssetMutation)
+            ->with('locations', Location::all())
+            // ...
+            ;
+    }
+
+    public function store(MutationStoreRequest $request): RedirectResponse
+    {
+        $this->authorize('create', AssetMutation::class);
+        // ... logic
+        return redirect()->route('assetMutations.index')
+            ->with('success', trans('general.asset_mutation_created'));
+    }
+
+    public function ship(AssetMutation $assetMutation): RedirectResponse
+    {
+        $this->authorize('ship', $assetMutation);
+        // ... update status jadi 'shipped'
+        return redirect()->back()
+            ->with('success', trans('general.asset_mutation_shipped'));
+    }
+}
+```
+
+### 3.9 Bulk Controller
+
+**Lokasi:** `app/Http/Controllers/{Module}/Bulk{Modules}Controller.php`
+
+**Aturan Umum Bulk Controller:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Method** | `destroy(Request $request)` — untuk bulk delete |
+| **Input** | Terima array of IDs dari form |
+| **Authorization** | Loop dan authorize per item, atau gunakan gate untuk semua |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Bulk Controller:**
+
+```php
+class BulkAssetMutationsController extends Controller
+{
+    public function destroy(Request $request): RedirectResponse
+    {
+        if ($request->has('ids')) {
+            foreach ($request->input('ids') as $id) {
+                $mutation = AssetMutation::find($id);
+                if ($mutation) {
+                    $this->authorize('delete', $mutation);
+                    $mutation->delete();
+                }
+            }
+        }
+        return redirect()->back()
+            ->with('success', trans('general.bulk_delete_success'));
+    }
+}
+```
+
+---
+
+### 3.10 Blade Views
+
+**Lokasi:** `resources/views/{module}/` dan `resources/views/blade/table/{module}.blade.php`
+
+#### Struktur Direktori View:
+
+```
+resources/views/{module}/
+├── index.blade.php      → Halaman daftar (menggunakan bootstrap-table)
+├── edit.blade.php       → Halaman create/edit (form)
+├── show.blade.php       → Halaman detail
+resources/views/blade/table/
+├── {module}.blade.php   → Partial tabel untuk index (opsional, bisa inline di index)
+```
+
+#### Aturan Umum Views:
+
+| Aspek | Aturan |
+|-------|--------|
+| **Extends** | `@extends('layouts/default')` |
+| **Section title** | `@section('title')` — gunakan trans() |
+| **Penerjemahan** | SEMUA teks menggunakan `{{ trans('general.key') }}` |
+| **CSRF** | Semua form POST/PUT/DELETE wajib `@csrf` |
+| **Method spoofing** | Update: `@method('PUT')` |
+| **Bootstrap Table** | Gunakan data-side-pagination="server", data-url ke route API |
+| **Authorization di view** | Gunakan `@can('module.action', $item)` untuk conditional buttons |
+| **Komentar** | `{{-- KUSTOM erickalvino-XX: deskripsi --}}` |
+
+#### index.blade.php — Pola Dasar:
+
+```blade
+@extends('layouts/default')
+
+@section('title')
+    {{ trans('general.module_title_plural') }}
+@stop
+
+@section('content')
+    <div class="row">
+        <div class="col-md-12">
+            <div class="box box-default">
+                <div class="box-body">
+                    <div class="table-responsive">
+                        <table
+                            data-columns="{{ \App\Presenters\{Module}Presenter::dataTableLayout() }}"
+                            data-callback="rebuildTable"
+                            data-id-table="{module}Table"
+                            id="{module}-table"
+                            class="table table-striped"
+                            data-url="{{ route('api.{module}.index') }}"
+                            data-side-pagination="server">
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+@stop
+
+@section('moar_scripts')
+    @include('partials.bootstrap-table')
+@stop
+```
+
+#### edit.blade.php — Pola Form:
+
+```blade
+@extends('layouts/default')
+
+@section('title')
+    {{ $item->id ? trans('general.edit') : trans('general.create') }}
+@stop
+
+@section('content')
+    <form
+        method="POST"
+        action="{{ $item->id ? route('module.update', $item->id) : route('module.store') }}"
+        accept-charset="UTF-8"
+        enctype="multipart/form-data">
+        @csrf
+        @if($item->id)
+            @method('PUT')
+        @endif
+
+        {{-- Field-field form --}}
+
+        <div class="box-footer">
+            <a href="{{ route('module.index') }}" class="btn btn-default">
+                {{ trans('button.cancel') }}
+            </a>
+            <button type="submit" class="btn btn-primary">
+                {{ trans('button.save') }}
+            </button>
+        </div>
+    </form>
+@stop
+```
+
+#### show.blade.php — Pola Detail:
+
+```blade
+@extends('layouts/default')
+
+@section('title')
+    {{ $item->document_number }}
+@stop
+
+@section('content')
+    <div class="row">
+        {{-- Informasi utama --}}
+        <div class="col-md-6">
+            <div class="box box-default">
+                <div class="box-header with-border">
+                    <h3 class="box-title">{{ trans('general.information') }}</h3>
+                </div>
+                <div class="box-body">
+                    <table class="table table-striped">
+                        <tr>
+                            <td>{{ trans('general.document_number') }}</td>
+                            <td>{{ $item->document_number }}</td>
+                        </tr>
+                        {{-- Field-field lainnya --}}
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- Items list --}}
+        <div class="col-md-12">
+            <div class="box box-default">
+                <div class="box-header with-border">
+                    <h3 class="box-title">{{ trans('general.items') }}</h3>
+                </div>
+                <div class="box-body">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>{{ trans('general.asset_tag') }}</th>
+                                <th>{{ trans('general.new_asset_tag') }}</th>
+                                {{-- ... --}}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($item->items as $assetItem)
+                            <tr>
+                                <td>{{ $assetItem->asset->asset_tag ?? '' }}</td>
+                                <td>{{ $assetItem->new_asset_tag }}</td>
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        {{-- Action buttons --}}
+        <div class="col-md-12">
+            @can('action', $item)
+                <form method="POST" action="{{ route('module.action', $item->id) }}">
+                    @csrf
+                    <button type="submit" class="btn btn-primary">
+                        {{ trans('general.action_button') }}
+                    </button>
+                </form>
+            @endcan
+        </div>
+    </div>
+@stop
+```
+
+---
+
+## 4. Standar Integrasi Global
+
+### 4.1 Routes (web.php)
+
+**Lokasi:** `routes/web.php`
+
+**Aturan Umum Route Web:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Group middleware** | `Route::group(['middleware' => ['auth']], function () { ... })` |
+| **Resource route** | `Route::resource('{slug}', Controller::class, [...])->names('{module}');` |
+| **Action routes** | `Route::post('{slug}/{id}/{action}', [Controller::class, '{action}'])->name('{module}.{action}');` |
+| **Bulk route** | `Route::post('{slug}/bulk/delete', [BulkController::class, 'destroy'])->name('{module}.bulk.delete');` |
+| **Parameter name** | `'parameters' => ['{slug}' => '{paramName}']` |
+| **Komentar** | Blok komentar di atas grup route: `/* KUSTOM erickalvino-XX: deskripsi */` |
+
+**Pola Route Web:**
+
+```php
+/*
+|--------------------------------------------------------------------------
+| KUSTOM erickalvino-AM: Asset Mutation Routes
+|--------------------------------------------------------------------------
+|
+| Custom module AssetMutation - CRUD + ship/receive/reject routes (web)
+|
+*/
+Route::group(['middleware' => ['auth']], function () {
+    Route::resource('asset-mutations', \App\Http\Controllers\AssetMutations\AssetMutationsController::class, [
+        'parameters' => ['asset-mutations' => 'assetMutation'],
+    ])->names('assetMutations');
+
+    Route::post('asset-mutations/{assetMutation}/ship', [AssetMutationsController::class, 'ship'])->name('assetMutations.ship');
+    Route::post('asset-mutations/{assetMutation}/receive', [AssetMutationsController::class, 'receive'])->name('assetMutations.receive');
+    Route::post('asset-mutations/{assetMutation}/reject', [AssetMutationsController::class, 'reject'])->name('assetMutations.reject');
+    Route::post('asset-mutations/bulk/delete', [BulkAssetMutationsController::class, 'destroy'])->name('assetMutations.bulk.delete');
+});
+```
+
+### 4.2 Routes (api.php)
+
+**Lokasi:** `routes/api.php`
+
+**Aturan Umum Route API:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **API Group** | Gunakan prefix API version (biasanya 'api/v1' atau langsung) |
+| **Middleware** | `auth:api` untuk proteksi |
+| **Resource route** | `Route::apiResource('{slug}', Api\{Modules}Controller::class);` |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Route API:**
+
+```php
+// KUSTOM erickalvino-AM: API routes for AssetMutation
+Route::group(['prefix' => 'v1', 'middleware' => ['auth:api']], function () {
+    Route::apiResource('asset-mutations', Api\AssetMutationsController::class);
+});
+```
+
+### 4.3 Permissions (config/permissions.php)
+
+**Lokasi:** `config/permissions.php`
+
+**Aturan Umum Permissions:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Group key** | Nama group ditulis sebagai `'Nama Module'` (judul, bisa spasi) |
+| **Permission pattern** | `'{module}.view'`, `'{module}.create'`, `'{module}.edit'`, `'{module}.delete'` |
+| **Custom permissions** | Tambahkan permission kustom sesuai aksi spesifik: `'{module}.ship'`, `'{module}.complete'`, dll |
+| **display** | `true` untuk muncul di UI manajemen grup/permission |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Permissions:**
+
+```php
+// KUSTOM erickalvino-MTS: Asset Mutation permission group
+'Asset Mutations' => [
+    ['permission' => 'assetmutations.view',   'display' => true],
+    ['permission' => 'assetmutations.create', 'display' => true],
+    ['permission' => 'assetmutations.edit',   'display' => true],
+    ['permission' => 'assetmutations.delete', 'display' => true],
+    ['permission' => 'assetmutations.ship',   'display' => true],
+    ['permission' => 'assetmutations.receive','display' => true],
+    ['permission' => 'assetmutations.reject', 'display' => true],
+],
+```
+
+**Tabel Mapping Permission Key:**
+
+| Modul | Permission Key Prefix | Contoh |
+|-------|----------------------|--------|
+| AssetMutation (AM) | `assetmutations` | `assetmutations.view` |
+| AssetDisposal (AD) | `assetdisposals` | `assetdisposals.complete` |
+| PurchaseRequest (PR) | `purchaserequests` | `purchaserequests.view` |
+
+### 4.4 AuthServiceProvider
+
+**Lokasi:** `app/Providers/AuthServiceProvider.php`
+
+**Aturan Umum AuthServiceProvider:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Import Model** | Tambahkan `use App\Models\{Module};` |
+| **Import Policy** | Tambahkan `use App\Policies\{Module}Policy;` |
+| **Policy Map** | Daftarkan di `$policies` array: `{Module}::class => {Module}Policy::class` |
+| **Gate Definitions** | Definisikan `Gate::define('{module}.{action}', ...)` untuk setiap aksi kustom |
+| **Superuser Fallback** | Gunakan `Gate::before` yang sudah ada (superuser bypass sudah otomatis) |
+| **Komentar** | `// KUSTOM erickalvino-XX: deskripsi` |
+
+**Pola Policy Registration:**
+
+```php
+// imports
+use App\Models\AssetMutation;
+use App\Policies\AssetMutationPolicy;
+
+// di $policies
+AssetMutation::class => AssetMutationPolicy::class,
+
+// Gate definitions setelah registerPolicies()
+// KUSTOM erickalvino-AM: Hak akses modul Asset Mutation Management
+Gate::define('asset-mutation.view', function ($user) {
+    return $user->hasAccess('assetmutations.view') || $user->isSuperUser();
+});
+Gate::define('asset-mutation.create', function ($user) { ... });
+// ... dan seterusnya
+```
+
+### 4.5 Language Files
+
+**Lokasi:**
+- `resources/lang/en-US/general.php` (Inggris)
+- `resources/lang/id-ID/general.php` (Indonesia)
+- `resources/lang/en-US/permissions.php` (Inggris — permission labels)
+- `resources/lang/id-ID/permissions.php` (Indonesia — permission labels)
+
+**Aturan Umum Language Files:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Key pattern** | `'{module}_{field}'` menggunakan snake_case |
+| **Prefix modul** | Semua key untuk modul kustom diawali prefix modul, misal: `asset_mutation_*`, `asset_disposal_*`, `purchase_request_*` |
+| **Konsistensi** | Key yang sama harus ada di en-US dan id-ID |
+| **Permission labels** | Di `permissions.php` gunakan key yang sama dengan config/permissions.php |
+| **Komentar** | `// KUSTOM erickalvino-XX` di atas blok key module |
+
+**Pola Language Key (general.php):**
+
+```php
+// KUSTOM erickalvino-AM: Asset Mutation
+'asset_mutation' => 'Asset Mutation',
+'asset_mutations' => 'Asset Mutations',
+'asset_mutation_document_number' => 'Document Number',
+'asset_mutation_origin_location' => 'Origin Location',
+'asset_mutation_destination_location' => 'Destination Location',
+'asset_mutation_status_draft' => 'Draft',
+'asset_mutation_status_shipped' => 'Shipped',
+'asset_mutation_status_received' => 'Received',
+'asset_mutation_status_rejected' => 'Rejected',
+// ... dan seterusnya
+```
+
+**Pola Language Key (permissions.php):**
+
+```php
+// KUSTOM erickalvino-AM
+'assetmutations' => [
+    'assetmutations.view' => 'View Asset Mutations',
+    'assetmutations.create' => 'Create Asset Mutations',
+    'assetmutations.edit' => 'Edit Asset Mutations',
+    'assetmutations.delete' => 'Delete Asset Mutations',
+    'assetmutations.ship' => 'Ship Asset Mutations',
+    'assetmutations.receive' => 'Receive Asset Mutations',
+    'assetmutations.reject' => 'Reject Asset Mutations',
+],
+```
+
+### 4.6 Layout & Bootstrap Table Partial
+
+**Lokasi:**
+- `resources/views/layouts/default.blade.php`
+- `resources/views/partials/bootstrap-table.blade.php`
+
+**Aturan untuk Integrasi Bootstrap Table:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Navbar/Sidebar** | Jika modul perlu muncul di sidebar, tambahkan menu di `default.blade.php` (atau file partial navigasi) dengan cek `@can` |
+| **bootstrap-table partial** | Wajib di-include di `@section('moar_scripts')` pada view index agar tabel dapat berfungsi |
+| **Komentar** | `{{-- KUSTOM erickalvino-XX --}}` untuk navigasi kustom |
+
+**Pola Include di View Index:**
+
+```blade
+@section('moar_scripts')
+    @include('partials.bootstrap-table')
+@stop
+```
+
+---
+
+## 5. Pola Status Workflow
+
+Setiap modul yang memiliki siklus hidup (lifecycle) menggunakan field `status` bertipe string dengan default value.
+
+**Pola Status AssetMutation:**
+
+```
+[Draft] ──ship──> [Shipped] ──receive──> [Received]
+                        │
+                        └──reject──> [Rejected]
+```
+
+**Aturan Status Workflow:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Field type** | `string` di database (bukan enum, untuk fleksibilitas) |
+| **Default** | `'draft'` |
+| **Status list** | Definisikan sebagai konstanta di model atau config |
+| **Transisi** | Transisi status ditangani di controller method spesifik (ship, receive, reject, dll) |
+| **Policy restrictions** | Policy method `update()` dan `delete()` mencegah aksi jika status sudah melewati tahap tertentu |
+| **Accessor** | `getStatusTextAttribute()` untuk menampilkan label yang sudah di-translate |
+
+**Contoh Transisi Status:**
+
+```php
+// Di controller
+public function ship(AssetMutation $assetMutation): RedirectResponse
+{
+    $this->authorize('ship', $assetMutation);
+    abort_if($assetMutation->status !== 'draft', 403);
+
+    $assetMutation->update(['status' => 'shipped', 'shipped_at' => now()]);
+
+    return redirect()->back()->with('success', trans('general.shipped'));
+}
+```
+
+---
+
+## 6. Pola Multi-Item (Batch/Child Items)
+
+Untuk modul yang membutuhkan multiple item dalam satu transaksi (seperti AssetMutation), gunakan pola **Parent-Child** dengan polymorphic relationship.
+
+**Struktur Database:**
+
+```
+┌──────────────────────┐       ┌──────────────────────────┐
+│   asset_mutations    │       │      asset_items          │
+├──────────────────────┤       ├──────────────────────────┤
+│ id                   │──┐    │ id                       │
+│ document_number      │  │    │ itemable_id              │ ← polymorphic
+│ status               │  │    │ itemable_type            │ ← polymorphic
+│ origin_location_id   │  │    │ asset_id                 │
+│ destination_location │  │    │ new_asset_tag            │
+│ ...                  │  │    │ condition_before         │
+└──────────────────────┘  │    │ condition_after          │
+                          │    │ notes                    │
+                          └────│ itemable_id = parent.id  │
+                               │ itemable_type = Parent   │
+                               └──────────────────────────┘
+```
+
+**Aturan Multi-Item:**
+
+| Aspek | Aturan |
+|-------|--------|
+| **Model child** | `AssetItem` — generic, digunakan oleh berbagai parent via polymorphic |
+| **Relasi** | Parent: `hasMany(AssetItem::class, 'itemable_id')->where('itemable_type', self::class)` atau morphMany |
+| **Validasi** | `items` field wajib `required|array|min:1` |
+| **Store logic** | Simpan parent dulu, baru loop items untuk insert child records |
+| **Update logic** | Hapus child records lama, ganti dengan yang baru |
+| **Asset Tag baru** | Setiap child bisa memiliki `new_asset_tag` yang unik dan wajib di-validasi terhadap tabel `assets` |
+
+**Pola Store dengan Items:**
+
+```php
+DB::transaction(function () use ($request) {
+    $mutation = AssetMutation::create($request->except('items'));
+    
+    foreach ($request->input('items') as $itemData) {
+        $mutation->items()->create([
+            'asset_id' => $itemData['asset_id'],
+            'new_asset_tag' => $itemData['new_asset_tag'],
+            'notes' => $itemData['notes'] ?? null,
+        ]);
+    }
+});
+```
+
+---
+
+## 7. Naming Convention & Standar Kode
+
+### 7.1 Global Naming Convention
+
+| Elemen | Konvensi | Contoh |
+|--------|----------|--------|
+| **Module Kode** | `erickalvino-XX` (XX = singkatan modul) | `erickalvino-AM`, `erickalvino-AD`, `erickalvino-PR` |
+| **Database Table** | `snake_case` plural | `asset_mutations`, `asset_items` |
+| **Model** | `StudlyCase` singular | `AssetMutation`, `AssetItem` |
+| **Controller (web)** | `StudlyCase` plural | `AssetMutationsController` |
+| **Bulk Controller** | `Bulk{Plural}Controller` | `BulkAssetMutationsController` |
+| **Controller (API)** | `{Plural}Controller` | `AssetMutationsController` |
+| **Policy** | `StudlyCase` singular | `AssetMutationPolicy` |
+| **Presenter** | `StudlyCase` singular | `AssetMutationPresenter` |
+| **Transformer** | `StudlyCase` plural | `AssetMutationsTransformer` |
+| **Form Request** | `{Action}StoreRequest` | `MutationStoreRequest` |
+| **Migration class** | `Create{Plural}Table` | `CreateAssetMutationsTable` |
+| **Route name** | `camelCase` | `assetMutations.index`, `assetMutations.ship` |
+| **Route slug** | `kebab-case` | `asset-mutations`, `asset-disposal` |
+| **Permission key** | `camelCase` dot | `assetmutations.view`, `assetdisposals.complete` |
+| **View directory** | `kebab-case` | `asset-mutations/` |
+| **Blade file** | `kebab-case` | `index.blade.php`, `edit.blade.php` |
+| **Language key** | `snake_case` | `asset_mutation_document_number` |
+
+### 7.2 Kode Komentar Standar
+
+Setiap file kustom WAJIB memiliki komentar identifier:
+
+```
+// KUSTOM erickalvino-XX: deskripsi singkat
+```
+
+Dimana `XX` adalah kode modul:
+- `AM` = Asset Mutation
+- `AD` = Asset Disposal
+- `PR` = Purchase Request
+- (tambah sesuai modul baru)
+
+### 7.3 Struktur Direktori Modul Kustom
+
+```
+app/
+├── Models/
+│   ├── AssetMutation.php          # KUSTOM erickalvino-AM
+│   ├── AssetItem.php              # KUSTOM erickalvino-AM (generic child)
+│   ├── AssetDisposalBatch.php     # KUSTOM erickalvino-AD
+│   └── PurchaseRequest.php        # KUSTOM erickalvino-PR
+├── Policies/
+│   ├── AssetMutationPolicy.php    # KUSTOM erickalvino-AM
+│   ├── AssetDisposalPolicy.php    # KUSTOM erickalvino-AD
+│   └── PurchaseRequestPolicy.php  # KUSTOM erickalvino-PR
+├── Presenters/
+│   ├── AssetMutationPresenter.php  # KUSTOM erickalvino-AM
+│   └── AssetDisposalBatchPresenter.php # KUSTOM erickalvino-AD
+├── Http/
+│   ├── Controllers/
+│   │   ├── Api/
+│   │   │   └── AssetMutationsController.php # KUSTOM erickalvino-AM
+│   │   ├── AssetMutations/
+│   │   │   ├── AssetMutationsController.php # KUSTOM erickalvino-AM (web)
+│   │   │   └── BulkAssetMutationsController.php # KUSTOM erickalvino-AM
+│   │   ├── AssetDisposal/
+│   │   │   ├── AssetDisposalBatchesController.php # KUSTOM erickalvino-AD
+│   │   │   └── BulkAssetDisposalBatchesController.php # KUSTOM erickalvino-AD
+│   │   └── PurchaseRequests/
+│   │       ├── PurchaseRequestsController.php # KUSTOM erickalvino-PR
+│   │       └── BulkPurchaseRequestsController.php # KUSTOM erickalvino-PR
+│   ├── Requests/
+│   │   └── MutationStoreRequest.php # KUSTOM erickalvino-AM
+│   └── Transformers/
+│       └── AssetMutationsTransformer.php # KUSTOM erickalvino-AM
+database/migrations/
+├── 2026_07_22_000001_create_asset_mutations_table.php # KUSTOM erickalvino-AM
+└── 2026_07_22_000002_create_asset_items_table.php # KUSTOM erickalvino-AM
+resources/views/
+├── asset-mutations/
+│   ├── index.blade.php
+│   ├── edit.blade.php
+│   └── show.blade.php
+├── asset-disposal/
+│   ├── index.blade.php
+│   └── ...
+└── blade/table/
+    ├── asset-mutations.blade.php
+    └── ...
+```
+
+---
+
+## 8. Daftar Modul yang Sudah Diimplementasi
+
+| No | Modul | Kode | Status | Komponen Lengkap |
+|----|-------|------|--------|------------------|
+| 1 | **Asset Mutation** | `AM` | ✅ Selesai | Model, Item, Policy, Presenter, Transformer, FormRequest, API Ctrl, Web Ctrl, Bulk Ctrl, Views (index/edit/show/table), Routes, Permissions, Lang (en/id), Migration, AuthProvider |
+| 2 | **Asset Disposal** | `AD` | ✅ Selesai | Model, Policy, Presenter, Controllers, Routes, Permissions, Lang, AuthProvider |
+| 3 | **Purchase Request** | `PR` | ✅ Selesai | Model, Policy, Controllers, Routes, Permissions, Lang, AuthProvider |
+
+---
+
+## 9. Lampiran: Cheat Sheet Pembuatan Modul Baru
+
+### Checklist Modul Baru
+
+```
+□ 1. MODEL
+□   - Buat app/Models/{Module}.php
+□   - (Opsional) Buat app/Models/{Module}Item.php untuk child items
+
+□ 2. MIGRATION
+□   - Buat migration create_{module_table}
+□   - (Opsional) Buat migration untuk child table
+
+□ 3. POLICY
+□   - Buat app/Policies/{Module}Policy.php
+□   - Method: view, create, update, delete (+ actions kustom)
+
+□ 4. PRESENTER
+□   - Buat app/Presenters/{Module}Presenter.php
+□   - Method: dataTableLayout(), title0(), title1(), adminName()
+
+□ 5. TRANSFORMER (opsional, hanya jika API dibutuhkan)
+□   - Buat app/Http/Transformers/{Modules}Transformer.php
+
+□ 6. FORM REQUEST (opsional)
+□   - Buat app/Http/Requests/{Action}StoreRequest.php
+
+□ 7. API CONTROLLER (opsional)
+□   - Buat app/Http/Controllers/Api/{Modules}Controller.php
+
+□ 8. WEB CONTROLLER
+□   - Buat app/Http/Controllers/{Module}/{Modules}Controller.php
+□   - Method: CRUD + action methods
+
+□ 9. BULK CONTROLLER (opsional)
+□   - Buat app/Http/Controllers/{Module}/Bulk{Modules}Controller.php
+
+□ 10. BLADE VIEWS
+□    - resources/views/{module}/index.blade.php
+□    - resources/views/{module}/edit.blade.php
+□    - resources/views/{module}/show.blade.php
+□    - resources/views/blade/table/{module}.blade.php (opsional)
+
+□ 11. ROUTES
+□    - routes/web.php: resource + action routes
+□    - routes/api.php: API resource routes (opsional)
+
+□ 12. PERMISSIONS
+□    - config/permissions.php: group + permission entries
+
+□ 13. AUTH SERVICE PROVIDER
+□    - Import model & policy
+□    - Daftarkan di $policies
+□    - Tambahkan Gate::define untuk action permissions
+
+□ 14. LANGUAGE FILES
+□    - resources/lang/en-US/general.php: translations
+□    - resources/lang/id-ID/general.php: translations
+□    - resources/lang/en-US/permissions.php: permission labels
+□    - resources/lang/id-ID/permissions.php: permission labels
+
+□ 15. LAYOUT / SIDEBAR (opsional)
+□    - Tambahkan menu navigasi di layout jika diperlukan
+
+□ 16. bootstrap-table.blade
+□    - table buttons (create)
+□    - formatters
+□    - formatters (LinkFormatter,ActionsFormatter,DisplayFormatter)
+
+```
+
+### Command Generator — Struktur File
+
+```bash
+# Model
+touch app/Models/{Module}.php
+
+# Migration
+php artisan make:migration create_{table}_table
+
+# Policy
+touch app/Policies/{Module}Policy.php
+
+# Presenter
+touch app/Presenters/{Module}Presenter.php
+
+# Transformer
+touch app/Http/Transformers/{Modules}Transformer.php
+
+# Form Request
+touch app/Http/Requests/{Action}StoreRequest.php
+
+# Controllers
+touch app/Http/Controllers/Api/{Modules}Controller.php
+mkdir -p app/Http/Controllers/{Module}
+touch app/Http/Controllers/{Module}/{Modules}Controller.php
+touch app/Http/Controllers/{Module}/Bulk{Modules}Controller.php
+
+# Views
+mkdir -p resources/views/{module}
+touch resources/views/{module}/index.blade.php
+touch resources/views/{module}/edit.blade.php
+touch resources/views/{module}/show.blade.php
+touch resources/views/blade/table/{module}.blade.php
+```
+
+---
+
+> **Dokumen ini disusun berdasarkan analisis kode implementasi modul kustom erickalvino pada platform Snipe-IT.**
+> 
+> *Referensi utama: AssetMutation (AM), AssetDisposal (AD), PurchaseRequest (PR)*
+> *Disusun: 23 Juli 2026*

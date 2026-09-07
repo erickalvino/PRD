@@ -1737,6 +1737,7 @@ Route::group(['middleware' => ['auth']], function () {
         Route::get('/', [AssetDeploymentsController::class, 'index'])->name('index');
         Route::get('create', [AssetDeploymentsController::class, 'create'])->name('create');
         Route::post('store', [AssetDeploymentsController::class, 'store'])->name('store');
+        Route::get('{id}', [AssetDeploymentsController::class, 'show'])->name('show');
         Route::get('{id}/edit', [AssetDeploymentsController::class, 'edit'])->name('edit');
 
         Route::post('{id}/release', [AssetDeploymentsController::class, 'releaseToPending'])->name('release');
@@ -1752,6 +1753,7 @@ Route::group(['middleware' => ['auth']], function () {
         Route::get('/', [CustomMaintenancesController::class, 'index'])->name('index');
         Route::get('create', [CustomMaintenancesController::class, 'create'])->name('create');
         Route::post('store', [CustomMaintenancesController::class, 'store'])->name('store');
+        Route::get('{id}', [CustomMaintenancesController::class, 'show'])->name('show');
         Route::get('{id}/edit', [CustomMaintenancesController::class, 'edit'])->name('edit');
 
         Route::post('{id}/release', [CustomMaintenancesController::class, 'releaseToPendingChecking'])->name('release');
@@ -1795,27 +1797,252 @@ Route::group([
 
 ## 📄 12.1 View yang wajib ada
 
-| Modul | File |
-|---|---|
-| Deployment | `resources/views/asset-deployments/index.blade.php` |
-| Deployment | `resources/views/asset-deployments/create.blade.php` |
-| Deployment | `resources/views/asset-deployments/edit.blade.php` |
-| Maintenance | `resources/views/custom-maintenances/index.blade.php` |
-| Maintenance | `resources/views/custom-maintenances/create.blade.php` |
-| Maintenance | `resources/views/custom-maintenances/edit.blade.php` |
-| Prints | `resources/views/custom-maintenances/reports/print-pdf.blade.php` |
-| Prints | `resources/views/custom-maintenances/reports/asset-status-sticker.blade.php` |
+| Modul | File | Archetype view | Fungsi |
+|---|---|---|---|
+| Deployment | `resources/views/asset-deployments/index.blade.php` | A — INDEX | Daftar dokumen |
+| Deployment | `resources/views/asset-deployments/show.blade.php` | B — SHOW-DOKUMEN | Detail + manifest + workflow |
+| Deployment | `resources/views/asset-deployments/create.blade.php` | D — FORM | Buat draft |
+| Deployment | `resources/views/asset-deployments/edit.blade.php` | D — FORM | Edit draft |
+| Deployment | `resources/views/blade/table/asset-deployments.blade.php` | wrapper `x-table` | Registrasi formatter |
+| Maintenance | `resources/views/custom-maintenances/index.blade.php` | A — INDEX | Daftar maintenance |
+| Maintenance | `resources/views/custom-maintenances/show.blade.php` | B — SHOW-DOKUMEN | Detail + repair manifest + workflow |
+| Maintenance | `resources/views/custom-maintenances/create.blade.php` | D — FORM | Buat tiket |
+| Maintenance | `resources/views/custom-maintenances/edit.blade.php` | D — FORM | Edit draft |
+| Maintenance | `resources/views/blade/table/custom-maintenances.blade.php` | wrapper `x-table` | Registrasi formatter |
+| Prints | `resources/views/custom-maintenances/reports/print-pdf.blade.php` | Print | Surat jalan / BA perbaikan |
+| Prints | `resources/views/custom-maintenances/reports/asset-status-sticker.blade.php` | Print | Stiker status aset |
 
-## 📄 12.2 Aturan view
+## 📄 12.2 Aturan view (WAJIB IKUTI `PRD-VIEW-BLUEPRINT.md`)
 
-1. Semua state-changing action memakai **form POST + `@csrf`**.
-2. Semua tombol aksi harus di-gate dengan `@can`.
-3. Kolom `branch_location` wajib muncul di index kedua modul.
-4. Modal VOID harus memvalidasi `cancellation_notes >= 15` di client & server.
-5. Untuk transisi antar status, gunakan tombol `POST` per status, **tidak boleh drop-down yang mengubah status via GET**.
-6. Gunakan `trans('custom.*')` hanya setelah file translasi dibuat (Lihat Bagian 13).
+1. **Layout:** semua halaman memakai `@extends('layouts/default')`; **dilarang** `@section('page_title')` karena blok tersebut tidak dirender oleh layout.
+2. **Judul:** `@section('title')` selalu terisi; `@section('title0')` opsional untuk judul bertingkat; tombol global (kembali/edit) di `@section('header_right')`.
+3. **Konten:** selalu dibungkus `<x-container>` + `<x-box>`; metadata memakai `<x-well>`, `<x-info-element>`, `<x-info-panel>`, `<x-icon>`, `<x-copy-to-clipboard>`, dan `<x-tabs>` bila ada >= 2 sub-listing.
+4. **Index:** wajib memakai `x-table.{module}` (wrapper) yang me-render `<x-table.index>` dengan `presenter` dari `{Module}Presenter::dataTableLayout()` dan `api_url` ke `route('api.{module}.index')`. **Dilarang** mendeklarasikan array kolom JS di dalam blade index. `@include('partials.bootstrap-table')` hanya di `@section('moar_scripts')`.
+5. **Kolom tabel:** satu-satunya sumber adalah Presenter (`searchable`, `sortable`, `switchable`, `visible`, `formatter`), mengikuti pola `AssetPresenter::dataTableLayout()`.
+6. **Status badge:** satu sumber kebenaran via `{Module}Presenter::statusBadges()` yang dipakai oleh `statusLabel()` pada presenter dan formatter JS. Jangan membuat ternary/switch status yang disalin-copy di tiap view.
+7. **Formatter JS:** satu set global per modul di `partials/bootstrap-table.blade.php`/`blade/table/*.blade.php`: `{module}LinkFormatter`, `{module}ActionsFormatter`, `statusFormatter`, `dateDisplayFormatter`, `branchFormatter`.
+8. **No inline style untuk warna/background/border/layout** (kecuali spacing minor atau warna dinamis berbasis data status). Callout penting wajib `role="alert"` + `aria-live`.
+9. **Tanggal:** pakai `Helper::getFormattedDateObject($value, 'date'|'datetime')`; dilarang `->format('d M Y H:i')` di view.
+10. **Terjemahan:** setiap label `{{ trans('general.key') ?? 'Fallback Bahasa Indonesia' }}`; aksi dibungkus `@can('{module}.{action}', $model)` sesuai policy.
+11. **Nilai kosong:** kolom nullable/relasi kosong ditampilkan `-`.
+12. **Asal/sumber cabang:** `branch_location` wajib memakai `BranchResolver`/`location->name`, bukan ID hardcoded.
+13. **Aksi workflow:** tombol transisi status (`release`, `start`, `ready`, `complete`, `cancel`, `unrepairable`, `vendor`, `qc`, `diagnosis`, `internal`) **wajib di `box-footer`** sebagai form `POST` + `@csrf`, bukan di `pull-right` header dan bukan via `GET`.
+14. **Manifest item:** satu tabel `table.table.table-striped` di `table-responsive`, kolom `#`, `Tipe`, `Item`, `Jumlah`, `Asal/Target`, `Catatan`; item campuran memakai kolom `Tipe` (bukan sub-box per tipe). Empty state memakai `callout callout-info`.
+15. **Modal konfirmasi void/delete:** modal AdminLTE (`modal`, `modal-dialog`, `modal-content`), `@csrf`, validasi client + server (`cancellation_notes >= config minimum`).
+16. **Komentar kustom:** `{{-- KUSTOM erickalvino-MODULE_DEPLOY|MAINT: ... --}}` di tiap blok view baru.
 
-## 📄 12.3 Contoh form `create.blade.php` Maintenance (field lengkap)
+## 📄 12.3 `asset-deployments/index.blade.php` (Archetype A)
+
+```blade
+{{-- KUSTOM erickalvino-MODULE_DEPLOY: Archetype INDEX --}}
+@extends('layouts/default')
+
+@section('title0')
+    {{ trans('custom.module_deployment') ?? 'Asset Deployment & Setup' }}
+@stop
+
+@section('title')
+    @yield('title0') @parent
+@stop
+
+@section('header_right')
+    @can('create', \App\Models\AssetDeployment::class)
+        <a href="{{ route('assetDeployments.create') }}" class="btn btn-primary pull-right">
+            <x-icon type="new" />
+            {{ trans('general.create') ?? 'Buat Baru' }}
+        </a>
+    @endcan
+@stop
+
+@section('content')
+    <x-container>
+        <x-box name="asset_deployments">
+            <x-table.asset-deployments :route="route('api.assetDeployments.index')" />
+        </x-box>
+    </x-container>
+@stop
+
+@section('moar_scripts')
+    @include('partials.bootstrap-table')
+@stop
+```
+
+## 📄 12.4 `blade/table/asset-deployments.blade.php` (wrapper `x-table`)
+
+```blade
+@props([
+    'route' => route('api.assetDeployments.index'),
+    'name' => 'asset-deployments',
+    'fixed_right_number' => 2,
+    'fixed_number' => 1,
+    'table_header' => trans('custom.module_deployment') ?? 'Asset Deployment',
+])
+
+@can('view', \App\Models\AssetDeployment::class)
+    <x-slot:table_header>
+        {{ $table_header }}
+    </x-slot:table_header>
+
+    <x-table
+        :presenter="\App\Presenters\AssetDeploymentPresenter::dataTableLayout()"
+        :$fixed_right_number
+        :$fixed_number
+        show_column_search="true"
+        show_advanced_search="true"
+        buttons="assetDeploymentsButtons"
+        api_url="{{ $route }}"
+        export_filename="export-asset-deployments-{{ date('Y-m-d') }}"
+    />
+@endcan
+```
+
+## 📄 12.5 `custom-maintenances/index.blade.php` (Archetype A)
+
+Pola identik dengan 12.3. Yang berubah: judul `trans('custom.module_maintenance')`, route `customMaintenances.create`, `x-table.custom-maintenances`, dan endpoint `route('api.customMaintenances.index')`; tombol aksi header hanya `create`.
+
+## 📄 12.6 `blade/table/custom-maintenances.blade.php` (wrapper `x-table`)
+
+```blade
+@props([
+    'route' => route('api.customMaintenances.index'),
+    'name' => 'custom-maintenances',
+    'fixed_right_number' => 2,
+    'fixed_number' => 1,
+    'table_header' => trans('custom.module_maintenance') ?? 'Custom Maintenance',
+])
+
+@can('view', \App\Models\CustomMaintenance::class)
+    <x-slot:table_header>
+        {{ $table_header }}
+    </x-slot:table_header>
+
+    <x-table
+        :presenter="\App\Presenters\CustomMaintenancePresenter::dataTableLayout()"
+        :$fixed_right_number
+        :$fixed_number
+        show_column_search="true"
+        show_advanced_search="true"
+        buttons="customMaintenancesButtons"
+        api_url="{{ $route }}"
+        export_filename="export-custom-maintenances-{{ date('Y-m-d') }}"
+    />
+@endcan
+```
+
+## 📄 12.7 `asset-deployments/show.blade.php` (Archetype SHOW-DOKUMEN)
+
+```blade
+{{-- KUSTOM erickalvino-MODULE_DEPLOY: Archetype SHOW-DOKUMEN --}}
+@extends('layouts/default')
+
+@section('title')
+    {{ $deployment->document_number ?? trans('custom.title.deployment_detail') ?? 'Detail Deployment' }}
+@stop
+
+@section('header_right')
+    <a href="{{ route('assetDeployments.index') }}" class="btn btn-default">
+        <i class="fa fa-arrow-left"></i> {{ trans('general.back') ?? 'Kembali' }}
+    </a>
+    @can('update', $deployment)
+        <a href="{{ route('assetDeployments.edit', $deployment->id) }}" class="btn btn-primary">
+            <x-icon type="edit" /> {{ trans('general.edit') ?? 'Edit' }}
+        </a>
+    @endcan
+@stop
+
+@section('content')
+    <x-container>
+        <x-box name="asset_deployment" box_style="default"
+               :header="trans('custom.title.deployment') ?? 'Deployment' . ': ' . ($deployment->document_number ?? $deployment->id)">
+            <div class="row">
+                <div class="col-md-12">
+                    <x-well>
+                        <x-info-element title="{{ trans('custom.field.document_number') ?? 'No. Dokumen' }}" icon_type="file">
+                            {{ $deployment->document_number ?? '-' }}
+                            <x-copy-to-clipboard :copy_what="$deployment->document_number ?? ''" />
+                        </x-info-element>
+                        @php $issueDate = Helper::getFormattedDateObject($deployment->issued_at ?? $deployment->created_at, 'datetime'); @endphp
+                        <x-info-element title="{{ trans('custom.field.issued_at') ?? 'Tanggal Terbit' }}" icon_type="calendar">
+                            {{ $issueDate['formatted'] ?? '-' }}
+                        </x-info-element>
+                        <x-info-element title="{{ trans('general.status') ?? 'Status' }}" icon_type="status">
+                            <span class="label {{ $deployment->present()->statusBadgeClass() }}">{{ $deployment->present()->statusText() }}</span>
+                        </x-info-element>
+                        <x-info-element title="{{ trans('custom.field.branch') ?? 'Cabang' }}" icon_type="location">
+                            {{ $deployment->location?->name ?? '-' }}
+                        </x-info-element>
+                        @if ($deployment->createdBy)
+                            <x-info-element title="{{ trans('general.created_by') ?? 'Pembuat' }}" icon_type="user">
+                                <a href="{{ route('users.show', $deployment->created_by) }}">{{ $deployment->createdBy->getFullNameAttribute() }}</a>
+                            </x-info-element>
+                        @endif
+                        <x-info-element title="{{ trans('general.notes') ?? 'Catatan' }}" icon_type="note">
+                            {{ $deployment->notes ?: '-' }}
+                        </x-info-element>
+                    </x-well>
+                </div>
+            </div>
+
+            {{-- Manifest --}}
+            <div class="row">
+                <div class="col-md-12">
+                    <h3 class="box-title">{{ trans('general.items') ?? 'Item' }} ({{ $deployment->items->count() }})</h3>
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>{{ trans('general.item_type') ?? 'Tipe' }}</th>
+                                    <th>{{ trans('general.item') ?? 'Item' }}</th>
+                                    <th class="text-center">{{ trans('general.quantity') ?? 'Jumlah' }}</th>
+                                    <th>{{ trans('custom.field.branch') ?? 'Asal/Tujuan' }}</th>
+                                    <th>{{ trans('general.notes') ?? 'Catatan' }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @forelse ($deployment->items as $item)
+                                <tr>
+                                    <td>{{ $loop->iteration }}</td>
+                                    <td><span class="label label-info">{{ ucfirst($item->item_type) }}</span></td>
+                                    <td><strong>{{ $item->asset?->asset_tag ?? $item->component?->name ?? $item->accessory?->name ?? $item->license?->name ?? $item->item_name ?? '-' }}</strong></td>
+                                    <td class="text-center"><span class="label label-success">{{ $item->qty }}</span></td>
+                                    <td>{{ $item->targetLocation?->name ?? '-' }}</td>
+                                    <td>{{ $item->notes ?: '-' }}</td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="6"><div class="callout callout-info">{{ trans('general.no_results') ?? 'Tidak ada item terdaftar.' }}</div></td>
+                                </tr>
+                            @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <x-slot name="customfooter">
+                <div class="box-footer">
+                    {{-- Workflow actions: release/start/ready/complete/cancel/unrepairable --}}
+                    {{-- Setiap tombol POST + @csrf, dibungkus @can('{module}.{action}', $deployment) --}}
+                </div>
+            </x-slot>
+        </x-box>
+    </x-container>
+@stop
+```
+
+## 📄 12.8 `custom-maintenances/show.blade.php` (Archetype SHOW-DOKUMEN)
+
+Pola sama dengan 12.7, memakai model `CustomMaintenance`, field `document_number`, `maintenance_type`, `supplier`, `estimated_completion_date`, `issue_description`, `repair_cost`, dan manifest `cannibal_items`. Aksi workflow di `box-footer`: `release`, `diagnosis`, `internal`, `vendor`, `qc`, `ready`, `complete`, `unrepairable`, `cancel`.
+
+## 📄 12.9 FORM (Archetype D) — create/edit
+
+- `create.blade.php` dan `edit.blade.php` memakai `@extends('layouts/default')`, `@section('title')` dengan translasi + fallback, `@section('content')` berisi `<x-container><x-box>...</x-box></x-container>`.
+- `box-body` dihasilkan otomatis oleh `x-box`; relasi memakai `select2` (pola `hardware/edit.blade.php`); footer default cancel/save muncul bila `x-box` diberi prop `route` (`<x-box.footer>`), atau gunakan slot `customfooter` untuk tombol tambahan. Untuk form yang mengikuti CRUD core, opsi utama memakai `@extends('layouts/edit-form', [...])` + `@section('inputFields')` seperti `hardware/edit.blade.php`.
+- Semua form `POST` + `@csrf`; edit memakai `@method('PUT')`.
+- Kumpulan field form maintenance dipertahankan dari revisi ini (lihat 12.10); yang berubah hanya wrapper dan tombol box-footer.
+
+## 📄 12.10 Contoh form `create.blade.php` Maintenance (field lengkap)
 
 ```blade
 @extends('layouts/default')
@@ -1824,15 +2051,10 @@ Route::group([
 @section('title') {{ trans('custom.module_maintenance') }} @parent @stop
 
 @section('content')
-<div class="row">
-  <div class="col-md-8 col-md-offset-2">
+<x-container>
+  <x-box name="custom_maintenance" box_style="default" :header="trans('custom.form.create_maintenance') ?? 'Buat Tiket Maintenance'">
     <form class="form-horizontal" method="POST" action="{{ route('customMaintenances.store') }}">
       @csrf
-      <div class="box box-default">
-        <div class="box-header with-border">
-          <h3 class="box-title">{{ trans('custom.form.create_maintenance') }}</h3>
-        </div>
-        <div class="box-body">
 
           {{-- Asset Target --}}
           <div class="form-group {{ $errors->has('asset_id') ? 'has-error' : '' }}">
@@ -1898,32 +2120,32 @@ Route::group([
             </div>
           </div>
 
-        </div>
-        <div class="box-footer text-right">
-          <button type="submit" class="btn btn-success">{{ trans('general.save') }}</button>
-        </div>
-      </div>
     </form>
-  </div>
-</div>
+  </x-box>
+</x-container>
 @endsection
 ```
 
-## 📄 12.4 Modal VOID (dipakai kedua modul)
+## 📄 12.11 Modal VOID (dipakai kedua modul)
 
 ```blade
-<div class="modal fade" id="voidModal">
+<div id="voidModal" class="modal fade" role="dialog">
   <div class="modal-dialog">
-    <form id="voidForm" method="POST">
+    <form id="voidForm" method="POST" action="{{ route('{module}.cancel', $doc->id) }}">
       @csrf
       <div class="modal-content">
-        <div class="modal-header"><h4>{{ trans('custom.modal.void_title') }}</h4></div>
+        <div class="modal-header">
+          <button type="button" class="close" data-dismiss="modal">&times;</button>
+          <h4 class="modal-title">{{ trans('custom.modal.void_title') ?? 'Void Dokumen' }}</h4>
+        </div>
         <div class="modal-body">
+          <label for="cancellation_notes">{{ trans('custom.field.cancellation_notes') ?? 'Alasan Pembatalan' }}</label>
           <textarea class="form-control" name="cancellation_notes" id="cancellation_notes" rows="4" required></textarea>
-          <span id="voidError" class="text-danger" style="display:none;">{{ trans('custom.modal.void_min') }}</span>
+          <span id="voidError" class="text-danger" role="alert">{{ trans('custom.modal.void_min') ?? 'Alasan minimal 15 karakter.' }}</span>
         </div>
         <div class="modal-footer">
-          <button type="submit" class="btn btn-danger">{{ trans('general.submit') }}</button>
+          <button type="button" class="btn btn-default" data-dismiss="modal">{{ trans('general.close') ?? 'Tutup' }}</button>
+          <button type="submit" class="btn btn-danger">{{ trans('general.submit') ?? 'Simpan' }}</button>
         </div>
       </div>
     </form>
@@ -2009,34 +2231,210 @@ Di file `lang/id/custom.php`, isi nilai bahasa Indonesia dengan **key yang sama 
 # 📌 BAGIAN 14: PRESENTER & TRANSFORMER (FINAL)
 # ------------------------------------------------------------------------------
 
-## 📄 14.1 Presenter tetap dipertahankan
-Presenters hanya memformat visual & angka. Semua teks badge dipakai dari translation key yang sudah ada (bukan `trans('custom.status_draft') ?? 'DRAFT'`).
+## 📄 14.1 Presenter (pola `AssetPresenter` v8.6.3)
+
+Presenter adalah **satu sumber kebenaran** untuk kolom tabel index dan label status.
+
+Aturan:
+
+- `AssetDeploymentPresenter` dan `CustomMaintenancePresenter` extends `App\Presenters\Presenter`.
+- `public static function dataTableLayout(array $hide_fields = [])` return `json_encode(array)`, mengikuti struktur kolom Snipe-IT (`field`, `checkbox`, `printIgnore`, `class`, `searchable`, `sortable`, `switchable`, `title`, `visible`, `formatter`).
+- `public static function statusBadges(): array` memuat pemetaan status → warna badge (`success`, `warning`, `info`, `danger`, `default`).
+- `statusLabel()` / `statusBadgeClass()` memakai `statusBadges()` + trans, **bukan** ternary copy-paste di view.
+- Field `branch_location` memakai `location->name` dari model (bukan ID hardcoded).
 
 ```php
-public function statusLabel(): string
-{
-    $class = match ($this->model->status) {
-        'DRAFT' => 'label-default',
-        'COMPLETED' => 'label-success',
-        'UNREPAIRABLE' => 'label-danger',
-        'CANCELLED' => 'label-danger',
-        default => 'label-info',
-    };
+<?php
+// erickalvino-MODULE_DEPLOY: Presenter deployment
+namespace App\Presenters;
 
-    return '<span class="label '.$class.'">' .
-        e(Lang::has('custom.status.'.Str::snake($this->model->status))
-            ? trans('custom.status.'.Str::snake($this->model->status))
-            : $this->model->status) .
-        '</span>';
+use App\Presenters\Presenter;
+use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Str;
+
+class AssetDeploymentPresenter extends Presenter
+{
+    public static function dataTableLayout(array $hide_fields = []): string
+    {
+        $layout = [
+            ['field' => 'checkbox', 'checkbox' => true, 'printIgnore' => true, 'class' => 'hidden-print', 'searchable' => false, 'sortable' => false, 'switchable' => false, 'title' => ''],
+            ['field' => 'document_number', 'title' => trans('custom.field.document_number'), 'searchable' => true, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'assetDeploymentsLinkFormatter'],
+            ['field' => 'branch_location', 'title' => trans('custom.field.branch'), 'searchable' => true, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'branchFormatter'],
+            ['field' => 'status', 'title' => trans('general.status'), 'searchable' => false, 'sortable' => true, 'switchable' => false, 'visible' => true, 'formatter' => 'statusFormatter'],
+            ['field' => 'created_at', 'title' => trans('general.created_at'), 'searchable' => false, 'sortable' => true, 'switchable' => true, 'visible' => false, 'formatter' => 'dateDisplayFormatter'],
+            ['field' => 'actions', 'title' => trans('table.actions'), 'searchable' => false, 'sortable' => false, 'switchable' => false, 'visible' => true, 'formatter' => 'assetDeploymentsActionsFormatter'],
+        ];
+
+        foreach ($hide_fields as $hide) {
+            foreach ($layout as $key => $column) {
+                if ($column['field'] === $hide) {
+                    $layout[$key]['visible'] = false;
+                }
+            }
+        }
+
+        return json_encode($layout);
+    }
+
+    public static function statusBadges(): array
+    {
+        return [
+            'DRAFT'                => 'default',
+            'PENDING_HANDOVER'     => 'warning',
+            'IN_PROGRESS'          => 'info',
+            'READY_TO_RETURN'      => 'info',
+            'COMPLETED'            => 'success',
+            'CANCELLED'            => 'danger',
+        ];
+    }
+
+    public function statusBadgeClass(): string
+    {
+        return 'label-'.(static::statusBadges()[$this->model->status] ?? 'default');
+    }
+
+    public function statusText(): string
+    {
+        $key = 'custom.status.'.Str::snake($this->model->status);
+        return Lang::has($key) ? trans($key) : $this->model->status;
+    }
+
+    public function statusLabel(): string
+    {
+        return '<span class="label '.$this->statusBadgeClass().'">'.e($this->statusText()).'</span>';
+    }
+
+    public function documentNumber(): string
+    {
+        return $this->model->document_number
+            ? '<code class="text-bold">'.e($this->model->document_number).'</code>'
+            : '<span class="text-muted"><i>DRAFT</i></span>';
+    }
 }
 ```
 
-## 📄 14.2 Transformer
-- Memakai route name final (`assetDeployments.print-pdf`, `customMaintenances.print-pdf`).
-- Hanya menampilkan tombol yang diizinkan policy.
-- Tidak menghasilkan HTML untuk pembatalan via GET; selalu `data-url` untuk modal POST.
+`CustomMaintenancePresenter` memakai pola yang sama dengan `statusBadges()`:
+`PENDING_CHECKING`, `UNDER_DIAGNOSIS`, `IN_SERVICE_INTERNAL`, `OUT_TO_VENDOR`, `POST_SERVICE_QC`, `READY_TO_RETURN`, `COMPLETED`, `UNREPAIRABLE`, `CANCELLED`.
 
----
+## 📄 14.2 Transformer (pola `AssetsTransformer` v8.6.3)
+
+Transformer memformat response API untuk `bootstrap-table` dan tidak boleh menampilkan HTML yang mengubah state via GET.
+
+Aturan:
+
+- Lokasi file `app/Http/Transformers/AssetDeploymentsTransformer.php` dan `CustomMaintenancesTransformer.php`.
+- Method `transformAssetDeployments(Collection $items, $total)` / `transformCustomMaintenances(...)` memanggil `(new DatatablesTransformer)->transformDatatables($array, $total)` sehingga response berbentuk Snipe-IT: `total`, `rows`, `current_page`, `per_page`, `total_pages`, `prev_page_url`, `next_page_url`.
+- Field teks memakai `e()` (XSS-safe), status memakai `$item->present()->statusLabel()`, tanggal memakai `Helper::getFormattedDateObject()`.
+- Tombol aksi dibuat dengan `Gate::allows()` / `$user->hasAccess()`, hanya render sebagai `data-method="post"` atau dropdown menuju modal POST, bukan link GET.
+
+```php
+<?php
+// erickalvino-MODULE_DEPLOY: Transformer API deployment
+namespace App\Http\Transformers;
+
+use App\Helpers\Helper;
+use App\Models\AssetDeployment;
+use App\Http\Transformers\DatatablesTransformer;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Gate;
+
+class AssetDeploymentsTransformer
+{
+    public function transformAssetDeployments(Collection $items, $total)
+    {
+        $array = [];
+        foreach ($items as $item) {
+            $array[] = $this->transformAssetDeployment($item);
+        }
+
+        return (new DatatablesTransformer)->transformDatatables($array, $total);
+    }
+
+    public function transformAssetDeployment(AssetDeployment $item): array
+    {
+        return [
+            'id' => (int) $item->id,
+            'document_number' => $item->present()->documentNumber(),
+            'branch_location' => e($item->location?->name ?? '-'),
+            'status' => $item->present()->statusLabel(),
+            'created_at' => Helper::getFormattedDateObject($item->created_at, 'datetime'),
+            'updated_at' => Helper::getFormattedDateObject($item->updated_at, 'datetime'),
+            'actions' => $this->generateActionButtons($item),
+        ];
+    }
+
+    private function generateActionButtons(AssetDeployment $item): string
+    {
+        // Dropdown aksi POST; hanya untuk aksi yang diizinkan Gate/policy.
+        // Tidak boleh menghasilkan link GET untuk state-change.
+        return '';
+    }
+}
+```
+
+## 📄 14.3 Output API index (dikonsumsi bootstrap-table)
+
+```json
+{
+  "total": 120,
+  "rows": [
+    { "document_number": "...", "branch_location": "Bandung", "status": "<span class=\"label label-info\">In Progress</span>", "actions": "..." }
+  ],
+  "current_page": 1,
+  "per_page": 50,
+  "total_pages": 3,
+  "prev_page_url": null,
+  "next_page_url": "https://example.test/api/v1/custom/asset-deployments?page=2"
+}
+```
+
+## 📄 14.4 Formatter yang harus terdaftar di `partials/bootstrap-table.blade.php`
+
+| Formatter | Fungsi |
+|---|---|
+| `assetDeploymentsLinkFormatter` | Link ke `assetDeployments.show` |
+| `assetDeploymentsActionsFormatter` | Dropdown aksi POST + modal void |
+| `customMaintenancesLinkFormatter` | Link ke `customMaintenances.show` |
+| `customMaintenancesActionsFormatter` | Dropdown aksi POST + modal void |
+| `statusFormatter` | Badge warna via statusBadges (loop array, bukan switch manual) |
+| `dateDisplayFormatter` | Format tanggal locale |
+| `branchFormatter` | Badge/text cabang (tanpa ID hardcoded) |
+
+## 📄 14.5 API Controller `index()` (memakai transformer)
+
+```php
+<?php
+// erickalvino-MODULE_DEPLOY: API index memakai transformer + DatatablesTransformer
+namespace App\Http\Controllers\Api;
+
+use App\Http\Transformers\AssetDeploymentsTransformer;
+use App\Models\AssetDeployment;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class AssetDeploymentsController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $this->authorize('view', AssetDeployment::class);
+
+        $items = AssetDeployment::with(['location', 'createdBy', 'items'])
+            ->filterByCompany()
+            ->filterByLocation($request->get('location'))
+            ->filterByStatus($request->get('status'))
+            ->orderBy('created_at', 'desc')
+            ->paginate($request->get('limit', 50));
+
+        $transformer = new AssetDeploymentsTransformer;
+
+        return response()->json(
+            $transformer->transformAssetDeployments($items->getCollection(), $items->total())
+        );
+    }
+}
+```
+
+`CustomMaintenancesController::index()` mengikuti pola yang sama dengan `CustomMaintenancesTransformer`.
 
 # ------------------------------------------------------------------------------
 # 📌 BAGIAN 15: DASHBOARD & PELAPORAN
@@ -2199,10 +2597,11 @@ class AssetDeploymentEnterpriseTest extends TestCase
 - [ ] Controllers + routes POST
 
 ## 📄 18.3 Fase C — UI
-- [ ] View deployment (index/create/edit)
-- [ ] View maintenance lengkap
+- [ ] View deployment (index + show + create/edit, memakai `x-table` / presenter `dataTableLayout`)
+- [ ] View maintenance lengkap (index + show + create/edit, memakai `x-table` / presenter `dataTableLayout`)
+- [ ] `blade/table/asset-deployments.blade.php` & `blade/table/custom-maintenances.blade.php`
 - [ ] Modal VOID + validasi client
-- [ ] Presenter & transformer final
+- [ ] Presenter (`dataTableLayout`, `statusBadges`, `statusLabel`) & transformer (`DatatablesTransformer`) final
 - [ ] File translasi EN/ID
 
 ## 📄 18.4 Fase D — Quality

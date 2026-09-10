@@ -1,6 +1,6 @@
 # PRODUCT REQUIREMENT DOCUMENT — ADDENDUM NOTES (CATATAN TEKNISI)
 ## Modul Deployment & Maintenance — Snipe-IT v8.6.3
-## Status: DRAFT — 3 keputusan desain menunggu konfirmasi (lihat Bagian 12)
+## Status: FINAL — semua keputusan sudah dikonfirmasi user
 
 > Dokumen ini **terpisah** dari `PRD-ADDENDUM.md` agar bisa dikerjakan **bertahap oleh agen-AI**:
 > - Tahap 1: `PRD-ADDENDUM.md` (request_date, tanggal transisi, source_location_id) — sudah FINAL.
@@ -318,6 +318,31 @@ public function resolve(TechnicianNoteResolveRequest $request, TechnicianNote $n
 - Route pakai **pattern route existing** modul (group `custom/`, middleware `auth`).
 - Setelah simpan: `redirect()->back()` ke halaman show pemilik catatan (deployment/maintenance).
 
+## ADN-05b Guard config di `complete()` (keputusan D-1 — default NON-AKTIF)
+
+Tambahkan di `config/deploy-service.php` (file config modul):
+
+```php
+// config/deploy-service.php — tambahan
+'block_on_open_blocker' => env('DEPLOY_BLOCK_ON_OPEN_BLOCKER', false),
+```
+
+Guard di awal `complete()` kedua controller (deployment & maintenance) — **tidak aktif
+secara default** (keputusan D-1 = warning saja):
+
+```php
+// erickalvino-ADDENDUM-NOTES ADN-05b: guard opsional, default false
+if (config('deploy-service.block_on_open_blocker')
+    && app(\App\Services\TechnicianNoteService::class)->hasOpenBlocker($deployment)) {
+    throw \Illuminate\Validation\ValidationException::withMessages([
+        'technician_notes' => trans('custom.notes.msg.blocked_complete'),
+    ]);
+}
+```
+
+> Karena default `false`, perilaku rilis pertama = **warning saja** (ADN-06c); bila suatu saat
+> manajemen ingin memperketat, cukup set env `DEPLOY_BLOCK_ON_OPEN_BLOCKER=true`.
+
 ---
 
 # 8. VIEWS
@@ -483,6 +508,10 @@ Render badge: `0` → abu; `>0` → kuning; `has_open_blocker = true` → **mera
         'resolved' => 'Issue resolved.',
         'readonly' => 'Notes are read-only — document is completed/cancelled.',
         'empty'    => 'No notes yet.',
+        'open_issues_warning' => 'There are still active issues on this document.',
+        'open_issues_detail'  => 'Active issues: :count:blocker Please review the Technician Notes panel before completing.',
+        'with_blocker' => ' (including a BLOCKER-severity issue!)',
+        'blocked_complete' => 'Completion is blocked while a BLOCKER-severity issue is still open.',
     ],
 ],
 
@@ -546,28 +575,40 @@ via `trans('custom.notes.type.'.$note->type)` — sesuai keputusan user (lang tr
 
 ---
 
-# 12. KEPUTUSAN TERBUKA (MENUNGGU KONFIRMASI USER)
+# 12. KEPUTUSAN KONFIRMASI (FINAL — SUDAH DISETUJUI USER)
 
-> 3 keputusan di bawah **tidak mengubah** struktur tabel maupun enum yang sudah fix.
-> Rekomendasi saya sudah ditandai — bisa langsung disetujui atau diganti.
+> Ketiga keputusan mengikuti **rekomendasi** yang diberikan. Struktur tabel & enum tidak berubah.
 
 ## D-1 — Efek `ISSUE` severity `BLOCKER` terhadap `complete()`
-- **(a) Warning saja — REKOMENDASI.** Tombol complete tetap aktif, tampil peringatan kuning
-  "Masih ada N kendala aktif". Toggle config siap: `config('deploy-service.block_on_open_blocker', false)`
-  sehingga kelak bisa diperketat tanpa deploy kode baru.
-- (b) Wajib resolved dulu — `complete()` ditolak (422) selama ada `BLOCKER` aktif
-  (lebih ketat, semacam QC di modul loan — tapi ada risiko deployment nyangkut karena
-  kendala lupa ditutup).
+- ✅ **(a) Warning saja.** Tombol complete tetap aktif; tampil peringatan kuning
+  "Masih ada N kendala aktif" (detail di ADN-06c).
+- ✅ Config toggle siap: `config('deploy-service.block_on_open_blocker', false)` — bila kelak
+  di-set `true`, `complete()` otomatis menolak selama ada `BLOCKER` aktif **tanpa deploy kode baru**
+  (guard sudah ditulis di ADN-05b, tidak aktif secara default).
 
 ## D-2 — Lampiran foto pada catatan
-- **(a) Tidak dulu — REKOMENDASI (fase 1 teks saja).** Implementasi ringan; foto bisa jadi
-  tahap 3 (butuh storage disk + validasi file + pola image-upload Snipe-IT).
-- (b) Ya, upload foto per catatan (kolom `attachment_path`, pola `image-upload` Snipe-IT).
+- ✅ **(a) Tidak dulu — fase 1 teks saja.** Kolom `attachment_path` TIDAK dibuat sekarang.
+- 📌 Roadmap fase 2 (eksplisit ditunda): upload foto per catatan via pola `image-upload` Snipe-IT
+  (butuh storage disk + validasi file). Bila diimplementasikan, cukup 1 migration tambah kolom +
+  update FormRequest/view — tidak mengubah struktur existing.
 
 ## D-3 — Notifikasi ke atasan/admin saat `BLOCKER` dibuat
-- **(a) Tidak dulu — REKOMENDASI (fase 1).** Badge merah di index sudah memberi visibilitas.
-- (b) Ya, kirim email/notification Snipe-IT ke admin/pembuat dokumen
-  (pola `Notification` Laravel yang dipakai Snipe-IT untuk checkout dsb).
+- ✅ **(a) Tidak dulu — fase 1.** Visibilitas cukup dari badge merah di halaman index (ADN-06b)
+  dan banner peringatan di halaman show (ADN-06c).
+- 📌 Roadmap fase 2 (eksplisit ditunda): Laravel Notification (mail) ke admin/pembuat dokumen
+  saat `ISSUE` severity `BLOCKER` dibuat, mengikuti pola notification Snipe-IT.
+
+## Tabel keputusan final
+
+| No | Pertanyaan | Keputusan final |
+|---|---|---|
+| 1 | Penyimpanan catatan | **Satu tabel `custom_technician_notes`** bersama DEPLOYMENT & MAINTENANCE |
+| 2 | Nilai enum | **Bahasa Inggris** di DB; UI diterjemahkan via lang `en-US` & `id-ID` |
+| 3 | D-1: efek `BLOCKER` | **Warning saja** + config toggle `block_on_open_blocker` (default `false`) |
+| 4 | D-2: lampiran foto | **Tidak dulu** — fase 2 (teks saja di fase 1) |
+| 5 | D-3: notifikasi email | **Tidak dulu** — fase 2 (badge + banner cukup di fase 1) |
+
+> ✅ **Addendum siap diberikan ke agen implementasi tahap 2.** Tidak ada keputusan terbuka lagi.
 
 ---
 
@@ -580,11 +621,13 @@ via `trans('custom.notes.type.'.$note->type)` — sesuai keputusan user (lang tr
 - [ ] Buat 2 FormRequest (ADN-03).
 - [ ] Buat `TechnicianNoteService` (ADN-04).
 - [ ] Buat `TechnicianNotesController` + 3 routes (ADN-05).
+- [ ] Tambah config `block_on_open_blocker` (default `false`) + guard di `complete()` kedua controller (ADN-05b).
 - [ ] Buat partial `_panel.blade.php` + include di 2 show view (ADN-06).
 - [ ] Tambah kolom badge di transformer/presenter index deployment & maintenance (ADN-06b).
+- [ ] Tambah banner warning di atas tombol complete di 2 show view (ADN-06c).
 - [ ] Tambah group `notes` di `lang/en-US/custom.php` dan `lang/id-ID/custom.php` (ADN-07).
-- [ ] Terapkan keputusan D-1/D-2/D-3 sesuai konfirmasi user.
-- [ ] Jalankan test ADN-TC-01..09.
+- [x] Keputusan D-1/D-2/D-3 sudah final (lihat Bagian 12): warning saja / tanpa foto / tanpa notifikasi di fase 1.
+- [ ] Jalankan test ADN-TC-01..12.
 
 ---
 
@@ -602,3 +645,6 @@ via `trans('custom.notes.type.'.$note->type)` — sesuai keputusan user (lang tr
 
 > Prinsip: addendum ini **murni additive** — tidak ada kolom/status/route lama yang berubah.
 > Bila D-1(b) yang dipilih, baru `complete()` controller diberi 1 blok guard tambahan.
+yang berubah.
+> Bila D-1(b) yang dipilih, baru `complete()` controller diberi 1 blok guard tambahan.
+ahan.
